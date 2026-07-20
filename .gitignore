@@ -1,0 +1,12 @@
+node_modules/
+uploads/videos/*
+!uploads/videos/.gitkeep
+test_videos/
+.env.prod
+nginx-plot-game.conf
+deploy-init.js
+*.tar.gz
+/tmp/
+.env
+alxg1.pem
+*.pem

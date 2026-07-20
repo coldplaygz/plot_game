@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>后台管理 - 心动时刻</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'Microsoft YaHei',sans-serif;background:#0f0f1a;color:#e0e0e0;min-height:100vh}
+/* Login */
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f0f1a,#1a1a2e,#16213e)}
+.login-box{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:16px;padding:40px;width:380px}
+.login-box h1{text-align:center;font-size:22px;color:#fff;margin-bottom:6px}
+.login-box .sub{text-align:center;font-size:12px;color:#666;margin-bottom:28px}
+.login-box .field{margin-bottom:16px}
+.login-box label{display:block;font-size:12px;color:#888;margin-bottom:5px}
+.login-box input{width:100%;padding:11px 14px;background:#0f0f1a;border:1px solid #2a2a4a;border-radius:8px;color:#fff;font-size:14px;outline:none}
+.login-box input:focus{border-color:#7c3aed}
+.login-box .btn{width:100%;padding:11px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer}
+.login-box .err{color:#ef4444;font-size:12px;text-align:center;margin-top:10px;min-height:18px}
+/* Layout */
+.app{display:none;min-height:100vh}
+.app.show{display:flex}
+.sidebar{width:200px;background:#111122;border-right:1px solid #2a2a4a;padding:20px 0;flex-shrink:0;position:sticky;top:0;height:100vh}
+.sidebar .logo{padding:0 20px 20px;font-size:16px;font-weight:700;color:#fff;border-bottom:1px solid #2a2a4a;margin-bottom:12px}
+.sidebar .logo span{color:#7c3aed;font-size:11px;display:block;font-weight:400}
+.sidebar nav a{display:flex;align-items:center;gap:8px;padding:10px 20px;color:#888;text-decoration:none;font-size:13px;cursor:pointer;transition:all .2s}
+.sidebar nav a:hover,.sidebar nav a.active{color:#fff;background:#1a1a3e}
+.sidebar .user{padding:14px 20px;border-top:1px solid #2a2a4a;position:absolute;bottom:0;width:200px;background:#111122;font-size:12px;color:#888}
+.main{flex:1;padding:28px;overflow-y:auto}
+.main h2{font-size:20px;color:#fff;margin-bottom:20px}
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:24px}
+.stat-card{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:12px;padding:18px}
+.stat-card .num{font-size:26px;font-weight:700;color:#7c3aed}
+.stat-card .label{font-size:12px;color:#666;margin-top:3px}
+/* Toolbar */
+.toolbar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
+.toolbar input,.toolbar select{padding:9px 12px;background:#0f0f1a;border:1px solid #2a2a4a;border-radius:8px;color:#fff;font-size:13px;outline:none}
+.toolbar input{flex:1;min-width:160px}
+.toolbar input:focus{border-color:#7c3aed}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:9px 18px;border:none;border-radius:8px;font-size:13px;cursor:pointer;transition:all .2s}
+.btn-p{background:#7c3aed;color:#fff}.btn-p:hover{background:#6d28d9}
+.btn-d{background:#dc2626;color:#fff}.btn-d:hover{background:#b91c1c}
+.btn-o{background:transparent;border:1px solid #2a2a4a;color:#aaa}.btn-o:hover{color:#fff;border-color:#7c3aed}
+.btn-g{background:#059669;color:#fff}.btn-g:hover{background:#047857}
+.btn-sm{padding:5px 12px;font-size:12px}
+/* Tables */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:10px 14px;text-align:left;border-bottom:1px solid #1e1e3a}
+th{color:#666;font-weight:500;background:#111122;position:sticky;top:0}
+tr:hover td{background:#1a1a3e}
+/* Modal */
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center}
+.modal-overlay.show{display:flex}
+.modal{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:14px;padding:28px;width:520px;max-width:90vw;max-height:85vh;overflow-y:auto}
+.modal.wide{width:750px}
+.modal h3{font-size:16px;color:#fff;margin-bottom:20px}
+.modal .field{margin-bottom:14px}
+.modal label{display:block;font-size:12px;color:#888;margin-bottom:4px}
+.modal input,.modal select,.modal textarea{width:100%;padding:9px 12px;background:#0f0f1a;border:1px solid #2a2a4a;border-radius:8px;color:#fff;font-size:13px;outline:none}
+.modal input:focus,.modal select:focus,.modal textarea:focus{border-color:#7c3aed}
+.modal textarea{resize:vertical;min-height:70px}
+.modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
+.modal .sub-section{margin-top:20px;padding-top:16px;border-top:1px solid #2a2a4a}
+.modal .sub-section h4{font-size:14px;color:#ccc;margin-bottom:10px}
+/* Affection rules inline */
+.aff-row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.aff-row select{flex:1;min-width:100px}
+.aff-row input{width:70px}
+.cond-row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.cond-row select,.cond-row input{min-width:80px}
+/* Tags */
+.tag{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:11px;margin:0 2px}
+.tag-aff-up{background:rgba(236,72,153,0.15);color:#ec4899}
+.tag-aff-down{background:rgba(6,182,212,0.15);color:#06b6d4}
+/* Tabs */
+.tab-content{display:none}
+.tab-content.active{display:block}
+/* Scene graph placeholder */
+.graph-box{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:12px;padding:24px;min-height:300px;text-align:center;color:#555;display:flex;align-items:center;justify-content:center;flex-direction:column}
+.empty{text-align:center;padding:50px 20px;color:#555;font-size:14px}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);padding:10px 24px;background:rgba(124,58,237,0.9);border-radius:20px;font-size:13px;z-index:200;animation:toastIn .3s,toastOut .3s 2s forwards}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+@keyframes toastOut{from{opacity:1}to{opacity:0}}
+.color-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+/* Video player modal */
+.video-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);z-index:300;align-items:center;justify-content:center;flex-direction:column}
+.video-modal.active{display:flex}
+.video-modal video{max-width:95vw;max-height:85vh;border-radius:8px;background:#000}
+.video-modal .vm-bar{display:flex;align-items:center;gap:12px;margin-top:16px}
+.video-modal .vm-title{color:#ccc;font-size:14px}
+.video-modal .btn-close{background:rgba(255,255,255,0.1);border:none;color:#fff;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px}
+.video-modal .btn-close:hover{background:rgba(220,38,38,0.5)}
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div class="login-wrap" id="loginWrap">
+  <div class="login-box">
+    <h1>后台管理</h1><div class="sub">心动时刻 · 内容管理系统</div>
+    <div class="field"><label>用户名</label><input id="loginUser" placeholder="admin"></div>
+    <div class="field"><label>密码</label><input id="loginPass" type="password" placeholder="请输入密码"></div>
+    <div id="loginErr" class="err"></div>
+    <button class="btn" onclick="doLogin()">登 录</button>
+  </div>
+</div>
+
+<!-- App -->
+<div class="app" id="appWrap">
+  <div class="sidebar">
+    <div class="logo">心动时刻<span>管理后台</span></div>
+    <nav>
+      <a class="active" data-tab="dashboard" onclick="switchTab('dashboard')">📊 仪表盘</a>
+      <a data-tab="videos" onclick="switchTab('videos')">🎬 视频管理</a>
+      <a data-tab="scenes" onclick="switchTab('scenes')">📝 场景编辑</a>
+      <a data-tab="characters" onclick="switchTab('characters')">👩 角色管理</a>
+      <a data-tab="endings" onclick="switchTab('endings')">🏆 结局管理</a>
+    </nav>
+    <div class="user"><span id="adminUser"></span><br><a style="color:#dc2626;cursor:pointer;font-size:11px" onclick="logout()">退出登录</a></div>
+  </div>
+  <div class="main" id="mainContent"></div>
+</div>
+
+<!-- Global Modal -->
+<div class="modal-overlay" id="modalOverlay"><div class="modal" id="modalBox"></div></div>
+
+<!-- Video Player Modal -->
+<div class="video-modal" id="videoModal">
+  <video id="videoPlayer" controls autoplay playsinline></video>
+  <div class="vm-bar">
+    <span class="vm-title" id="videoPlayerTitle"></span>
+    <button class="btn-close" onclick="closeVideoPlayer()">✕ 关闭</button>
+  </div>
+</div>
+
+<script>
+const API = '';
+let token = localStorage.getItem('plot_game_admin_token');
+let currentTab = 'dashboard';
+let dataCache = {};
+
+function api(p,o={}) {
+  const h = {'Content-Type':'application/json'};
+  if(token) h['Authorization'] = 'Bearer '+token;
+  return fetch(API+p,{...o,headers:{...h,...o.headers}}).then(r=>r.json());
+}
+function toast(m) {
+  const t = document.createElement('div'); t.className='toast'; t.textContent=m;
+  document.body.appendChild(t); setTimeout(()=>t.remove(),2500);
+}
+function showModal(title,content,wide) {
+  document.getElementById('modalBox').innerHTML = `<h3>${title}</h3>${content}`;
+  document.getElementById('modalBox').className = 'modal' + (wide?' wide':'');
+  document.getElementById('modalOverlay').classList.add('show');
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('show'); }
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.sidebar nav a').forEach(a=>a.classList.toggle('active',a.dataset.tab===tab));
+  if(tab==='dashboard') loadDashboard();
+  else if(tab==='videos') loadVideos();
+  else if(tab==='scenes') loadScenes();
+  else if(tab==='characters') loadCharacters();
+  else if(tab==='endings') loadEndings();
+}
+
+// ===== Auth =====
+async function doLogin() {
+  const u = document.getElementById('loginUser').value.trim();
+  const p = document.getElementById('loginPass').value;
+  if(!u||!p) return document.getElementById('loginErr').textContent='请输入用户名和密码';
+  const r = await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:u,password:p})});
+  if(r.error) return document.getElementById('loginErr').textContent=r.error;
+  if(r.user.role==='player') return document.getElementById('loginErr').textContent='权限不足，需要管理员账号';
+  token = r.token; localStorage.setItem('plot_game_admin_token',token);
+  document.getElementById('adminUser').textContent = r.user.nickname||r.user.username;
+  document.getElementById('loginWrap').style.display='none';
+  document.getElementById('appWrap').classList.add('show');
+  loadDashboard();
+}
+function logout() { token=null; localStorage.removeItem('plot_game_admin_token'); location.reload(); }
+
+// ===== Dashboard =====
+async function loadDashboard() {
+  const [vc,sc,cc,ec,enc] = await Promise.all([
+    api('/api/videos?limit=1'), api('/api/scenes'),
+    api('/api/characters/all'), api('/api/endings'),
+    api('/api/endings')
+  ]);
+  document.getElementById('mainContent').innerHTML = `
+    <h2>📊 仪表盘</h2>
+    <div class="stats">
+      <div class="stat-card"><div class="num">${vc.pagination?.total||0}</div><div class="label">视频总数</div></div>
+      <div class="stat-card"><div class="num">${sc.scenes?.length||0}</div><div class="label">场景节点</div></div>
+      <div class="stat-card"><div class="num">${cc.characters?.length||0}</div><div class="label">角色数量</div></div>
+      <div class="stat-card"><div class="num">${enc.endings?.length||0}</div><div class="label">结局总数</div></div>
+    </div>
+    <div style="color:#666;font-size:13px;line-height:2">
+      <p>欢迎使用心动时刻内容管理系统。</p>
+      <p>左侧菜单可管理视频、场景、角色和结局。</p>
+      <p>游戏入口: <a href="/" target="_blank" style="color:#7c3aed">/</a></p>
+      <p style="margin-top:12px;color:#555"><b>工作流程:</b><br>
+      ① 上传视频 → ② 创建场景(关联视频) → ③ 为场景添加选择项 → ④ 配置好感度规则和条件 → ⑤ 设置结局</p>
+    </div>`;
+}
+
+// ===== Videos =====
+async function loadVideos() {
+  const r = await api('/api/videos');
+  const videos = r.videos||[];
+  // 缓存到全局变量供播放使用
+  window._videosCache = {};
+  videos.forEach(v => { window._videosCache[v.id] = v; });
+  let rows = videos.map(v=>`<tr>
+    <td>${v.id}</td><td>${v.title}</td><td>${v.filename}</td>
+    <td>${(v.file_size/1024/1024).toFixed(1)}MB</td>
+    <td>${(v.duration||0).toFixed(0)}s</td>
+    <td>${v.scene_count||0}个场景</td>
+    <td>${new Date(v.created_at).toLocaleDateString()}</td>
+    <td>
+      <button class="btn btn-g btn-sm" onclick="playVideoById(${v.id})">▶ 播放</button>
+      <button class="btn btn-o btn-sm" onclick="replaceVideo(${v.id})">🔄 替换</button>
+      <button class="btn btn-d btn-sm" onclick="deleteVideo(${v.id})">删除</button>
+    </td>
+  </tr>`).join('');
+  document.getElementById('mainContent').innerHTML = `
+    <h2>🎬 视频管理</h2>
+    <div class="toolbar">
+      <input type="file" id="videoFile" accept=".mp4,.webm,.mov,.avi,.mkv">
+      <input id="videoTitle" placeholder="视频标题" style="max-width:200px">
+      <button class="btn btn-p" onclick="uploadVideo()">上传视频</button>
+    </div>
+    <table><thead><tr><th>ID</th><th>标题</th><th>文件名</th><th>大小</th><th>时长</th><th>关联</th><th>日期</th><th>操作</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" class="empty">暂无视频</td></tr>'}</tbody></table>`;
+}
+async function uploadVideo() {
+  const file = document.getElementById('videoFile').files[0];
+  const title = document.getElementById('videoTitle').value.trim();
+  if(!file) return toast('请选择文件');
+  if(!title) return toast('请输入标题');
+  const fd = new FormData(); fd.append('video',file); fd.append('title',title);
+  const r = await fetch(API+'/api/videos',{method:'POST',headers:{'Authorization':'Bearer '+token},body:fd}).then(r=>r.json());
+  if(r.error) return toast(r.error);
+  toast('上传成功!'); loadVideos();
+}
+async function deleteVideo(id) { if(!confirm('确定删除? 关联场景也将被删除!')) return;
+  await api('/api/videos/'+id,{method:'DELETE'}); toast('已删除'); loadVideos(); }
+
+// 视频播放
+function playVideoById(id) {
+  const v = window._videosCache && window._videosCache[id];
+  if (!v) return toast('视频数据未找到');
+  const modal = document.getElementById('videoModal');
+  const player = document.getElementById('videoPlayer');
+  
+  // 先清空旧视频
+  player.pause();
+  player.removeAttribute('src');
+  player.load();
+  
+  // 先显示播放器，再设置视频源（防止浏览器跳到默认播放器）
+  document.getElementById('videoPlayerTitle').textContent = v.title + ' (ID:' + id + ' | ' + (v.file_size/1024/1024).toFixed(1) + 'MB)';
+  modal.classList.add('active');
+  
+  // 延迟一帧设置视频源，确保元素已可见
+  requestAnimationFrame(() => {
+    player.src = '/' + (v.file_path || '').replace(/\\/g, '/');
+    player.load();
+    player.play().catch(e => console.log('自动播放:', e));
+  });
+}
+function closeVideoPlayer() {
+  const player = document.getElementById('videoPlayer');
+  player.pause();
+  player.src = '';
+  document.getElementById('videoModal').classList.remove('active');
+}
+// ESC 关闭视频播放器
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('videoModal').classList.contains('active')) {
+    closeVideoPlayer();
+  }
+});
+
+// 视频替换
+function replaceVideo(id) {
+  const v = window._videosCache && window._videosCache[id];
+  if (!v) return toast('视频数据未找到');
+  // 创建临时文件选择器
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.mp4,.webm,.mov,.avi,.mkv';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    if (!confirm(`确定用 "${file.name}" (${(file.size/1024/1024).toFixed(1)}MB) 替换 "${v.title}"？`)) return;
+    
+    const fd = new FormData();
+    fd.append('video', file);
+    
+    toast('正在上传替换...');
+    const r = await fetch(API + '/api/videos/' + id + '/replace', {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: fd
+    }).then(r => r.json());
+    
+    if (r.error) return toast('替换失败: ' + r.error);
+    toast('✅ 视频已替换!');
+    loadVideos();
+  };
+  input.click();
+}
+
+// ===== Scenes =====
+async function loadScenes() {
+  const r = await api('/api/scenes');
+  const scenes = r.scenes||[];
+  let rows = scenes.map(s=>`<tr>
+    <td>${s.id}</td><td>${s.is_start?'⭐ ':''}${s.title}</td><td>${s.chapter||'-'}</td>
+    <td>${s.video_title||'无视频'}</td><td>${s.choice_count||0}</td>
+    <td>${s.is_ending?'🏁 '+ (s.ending_title||''):'-'}</td>
+    <td>
+      <button class="btn btn-p btn-sm" onclick="editScene(${s.id})">编辑</button>
+      <button class="btn btn-g btn-sm" onclick="editChoices(${s.id})">选项(${s.choice_count||0})</button>
+      <button class="btn btn-d btn-sm" onclick="deleteScene(${s.id})">删除</button>
+    </td>
+  </tr>`).join('');
+  document.getElementById('mainContent').innerHTML = `
+    <h2>📝 场景编辑</h2>
+    <div class="toolbar">
+      <button class="btn btn-p" onclick="editScene(0)">+ 创建场景</button>
+      <span style="color:#666;font-size:12px;margin-left:12px">⭐ = 起始场景 | 🏁 = 结局场景</span>
+    </div>
+    <table><thead><tr><th>ID</th><th>标题</th><th>章节</th><th>视频</th><th>选项数</th><th>结局</th><th>操作</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="7" class="empty">暂无场景，请先上传视频再创建场景</td></tr>'}</tbody></table>`;
+}
+
+async function editScene(id) {
+  let s = {title:'',description:'',video_id:'',chapter:'',is_start:false,is_ending:false,ending_id:'',choice_timer:10,choice_delay:0,sort_order:0};
+  if(id>0) {
+    const r = await api('/api/scenes/'+id);
+    if(r.scene) s = r.scene;
+  }
+  const [vr,er] = await Promise.all([api('/api/videos?limit=200'),api('/api/endings')]);
+  const videos = vr.videos||[]; const endings = er.endings||[];
+  const vOpts = videos.map(v=>`<option value="${v.id}" ${s.video_id==v.id?'selected':''}>${v.title} (${v.filename})</option>`).join('');
+  const eOpts = endings.map(e=>`<option value="${e.id}" ${s.ending_id==e.id?'selected':''}>${e.title} (${e.type})</option>`).join('');
+  showModal(id>0?'编辑场景':'创建场景',`
+    <div class="field"><label>场景标题 *</label><input id="sTitle" value="${s.title||''}"></div>
+    <div class="field"><label>描述</label><textarea id="sDesc">${s.description||''}</textarea></div>
+    <div class="field"><label>关联视频 *</label><select id="sVideo"><option value="">--选择视频--</option>${vOpts}</select></div>
+    <div class="field"><label>章节</label><input id="sChapter" value="${s.chapter||''}" placeholder="如: 第一章"></div>
+    <div class="field" style="display:flex;gap:16px;align-items:center"><label>起始场景</label><input type="checkbox" id="sStart" ${s.is_start?'checked':''} style="width:auto"> <span style="color:#666;font-size:11px">(仅一个)</span></div>
+    <div class="field" style="display:flex;gap:16px;align-items:center"><label>结局场景</label><input type="checkbox" id="sEnding" ${s.is_ending?'checked':''} style="width:auto"> <select id="sEndingId" style="width:auto;flex:1"><option value="">--选择结局--</option>${eOpts}</select></div>
+    <div class="field"><label>选择限时(秒)</label><input id="sTimer" type="number" value="${s.choice_timer||10}" min="0"></div>
+    <div class="field"><label>选项弹出延迟(秒, 0=视频播完)</label><input id="sDelay" type="number" value="${s.choice_delay||0}" min="0" placeholder="0=自动取视频时长"></div>
+    <div class="actions">
+      <button class="btn btn-o" onclick="closeModal()">取消</button>
+      <button class="btn btn-p" onclick="saveScene(${id})">保存</button>
+    </div>`,true);
+}
+async function saveScene(id) {
+  const data = {
+    title: document.getElementById('sTitle').value,
+    description: document.getElementById('sDesc').value,
+    video_id: parseInt(document.getElementById('sVideo').value),
+    chapter: document.getElementById('sChapter').value,
+    is_start: document.getElementById('sStart').checked,
+    is_ending: document.getElementById('sEnding').checked,
+    ending_id: document.getElementById('sEndingId').value ? parseInt(document.getElementById('sEndingId').value) : null,
+    choice_timer: isNaN(parseInt(document.getElementById('sTimer').value)) ? 10 : parseInt(document.getElementById('sTimer').value),
+    choice_delay: parseInt(document.getElementById('sDelay').value)||0
+  };
+  if(!data.title||!data.video_id) return toast('请填写标题和选择视频');
+  const r = id>0 ? await api('/api/scenes/'+id,{method:'PUT',body:JSON.stringify(data)})
+    : await api('/api/scenes',{method:'POST',body:JSON.stringify(data)});
+  if(r.error) return toast(r.error);
+  toast(id>0?'更新成功':'创建成功'); closeModal(); loadScenes();
+}
+async function deleteScene(id) { if(!confirm('确定删除此场景及所有选项?')) return;
+  await api('/api/scenes/'+id,{method:'DELETE'}); toast('已删除'); loadScenes(); }
+
+// ===== Choices =====
+async function editChoices(sceneId) {
+  const [sr,cr,chr] = await Promise.all([api('/api/scenes/'+sceneId),api('/api/choices/scene/'+sceneId),api('/api/characters/all')]);
+  const scene = sr.scene; const choices = cr.choices||[]; const chars = chr.characters||[];
+  let html = `<div style="margin-bottom:16px;color:#888;font-size:13px">场景: ${scene?.title||''}</div>`;
+  html += `<table><thead><tr><th>ID</th><th>选项文本</th><th>跳转场景</th><th>好感度</th><th>条件</th><th>操作</th></tr></thead><tbody>`;
+
+  const allScenesR = await api('/api/scenes');
+  const allScenes = allScenesR.scenes||[];
+
+  for(let c of choices) {
+    const affTags = (c.affection_rules||[]).map(a=>`<span class="tag ${a.delta>0?'tag-aff-up':'tag-aff-down'}">${a.character_name}:${a.delta>0?'+':''}${a.delta}</span>`).join('');
+    const condTags = (c.conditions||[]).map(cd=>`<span class="tag" style="background:rgba(245,158,11,0.1);color:#f59e0b">${cd.character_name}好感${cd.operator}${cd.value}</span>`).join('');
+    html += `<tr>
+      <td>${c.id}</td><td>${c.text}</td><td>${c.next_scene_title||'无'}</td>
+      <td>${affTags||'-'}</td><td>${condTags||'-'}</td>
+      <td>
+        <button class="btn btn-p btn-sm" onclick="editOneChoice(${c.id},${sceneId})">编辑</button>
+        <button class="btn btn-d btn-sm" onclick="deleteChoice(${c.id},${sceneId})">删除</button>
+      </td></tr>`;
+  }
+  html += '</tbody></table>';
+  html += `<div style="margin-top:16px"><button class="btn btn-p" onclick="editOneChoice(0,${sceneId})">+ 添加选项</button></div>`;
+  html += `<div class="actions"><button class="btn btn-o" onclick="closeModal()">关闭</button></div>`;
+  showModal('选项管理 - 场景#'+sceneId, html, true);
+  window._sceneId = sceneId;
+  window._chars = chars;
+  window._allScenes = allScenes;
+}
+async function editOneChoice(id, sceneId) {
+  let c = {text:'',next_scene_id:'',sort_order:0,timer_seconds:0,affection_rules:[],conditions:[]};
+  if(id>0) {
+    const r = await api('/api/choices/scene/'+sceneId);
+    const found = (r.choices||[]).find(x=>x.id===id);
+    if(found) c = found;
+  }
+  const sceneOpts = (window._allScenes||[]).map(s=>`<option value="${s.id}" ${c.next_scene_id==s.id?'selected':''}>${s.title}</option>`).join('');
+
+  // 好感度规则行
+  let affHtml = '';
+  (c.affection_rules||[]).forEach((a,i)=>{
+    affHtml += `<div class="aff-row">
+      <select class="affChar">${(window._chars||[]).map(ch=>`<option value="${ch.id}" ${a.character_id==ch.id?'selected':''}>${ch.name}</option>`).join('')}</select>
+      <input class="affDelta" type="number" value="${a.delta}" placeholder="好感变化">
+      <button class="btn btn-d btn-sm" onclick="this.parentElement.remove()">✕</button></div>`;
+  });
+
+  // 条件行
+  let condHtml = '';
+  (c.conditions||[]).forEach((cd,i)=>{
+    condHtml += `<div class="cond-row">
+      <select class="condChar">${(window._chars||[]).map(ch=>`<option value="${ch.id}" ${cd.character_id==ch.id?'selected':''}>${ch.name}</option>`).join('')}</select>
+      <select class="condOp"><option value=">=" ${cd.operator=='>='?'selected':''}>>=</option><option value="<=" ${cd.operator=='<='?'selected':''}><=</option><option value=">" ${cd.operator=='>'?'selected':''}>></option><option value="<" ${cd.operator=='<'?'selected':''}><</option><option value="=" ${cd.operator=='='?'selected':''}>=</option></select>
+      <input class="condVal" type="number" value="${cd.value}" placeholder="值">
+      <button class="btn btn-d btn-sm" onclick="this.parentElement.remove()">✕</button></div>`;
+  });
+
+  showModal(id>0?'编辑选项':'添加选项',`
+    <div class="field"><label>选项文本 *</label><input id="cText" value="${c.text||''}"></div>
+    <div class="field"><label>跳转场景</label><select id="cNext"><option value="">无(停留)</option>${sceneOpts}</select></div>
+    <div class="field"><label>排序</label><input id="cSort" type="number" value="${c.sort_order||0}"></div>
+    <div class="field"><label>单独计时(秒,0=用场景默认)</label><input id="cTimer" type="number" value="${c.timer_seconds||0}"></div>
+    <div class="sub-section"><h4>💕 好感度规则</h4><div id="affRules">${affHtml||'<div style="color:#555;font-size:12px">暂无规则</div>'}</div>
+      <button class="btn btn-o btn-sm" onclick="addAffRule()" style="margin-top:8px">+ 添加规则</button></div>
+    <div class="sub-section"><h4>🔒 显示条件</h4><div id="condRules">${condHtml||'<div style="color:#555;font-size:12px">无条件限制</div>'}</div>
+      <button class="btn btn-o btn-sm" onclick="addCondRule()" style="margin-top:8px">+ 添加条件</button></div>
+    <div class="actions">
+      <button class="btn btn-o" onclick="closeModal()">取消</button>
+      <button class="btn btn-p" onclick="saveChoice(${id},${sceneId})">保存</button>
+    </div>`,true);
+}
+function addAffRule() {
+  const div = document.getElementById('affRules');
+  const sel = (window._chars||[]).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  const row = document.createElement('div'); row.className='aff-row';
+  row.innerHTML = `<select class="affChar">${sel}</select><input class="affDelta" type="number" placeholder="好感变化"><button class="btn btn-d btn-sm" onclick="this.parentElement.remove()">✕</button>`;
+  div.appendChild(row);
+  if(div.querySelector('div[style]')) div.innerHTML = '';
+}
+function addCondRule() {
+  const div = document.getElementById('condRules');
+  const sel = (window._chars||[]).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  const row = document.createElement('div'); row.className='cond-row';
+  row.innerHTML = `<select class="condChar">${sel}</select><select class="condOp"><option value=">=">>=</option><option value="<="><=</option><option value=">">></option><option value="<"><</option><option value="=">=</option></select><input class="condVal" type="number" placeholder="值"><button class="btn btn-d btn-sm" onclick="this.parentElement.remove()">✕</button>`;
+  div.appendChild(row);
+  if(div.querySelector('div[style]')) div.innerHTML = '';
+}
+async function saveChoice(id, sceneId) {
+  const text = document.getElementById('cText').value;
+  if(!text) return toast('请输入选项文本');
+  const data = {
+    scene_id: sceneId, text,
+    next_scene_id: document.getElementById('cNext').value ? parseInt(document.getElementById('cNext').value) : null,
+    sort_order: parseInt(document.getElementById('cSort').value)||0,
+    timer_seconds: parseInt(document.getElementById('cTimer').value)||0
+  };
+  let choiceId = id;
+  if(id>0) {
+    await api('/api/choices/'+id,{method:'PUT',body:JSON.stringify(data)});
+  } else {
+    const r = await api('/api/choices',{method:'POST',body:JSON.stringify(data)});
+    if(r.error) return toast(r.error);
+    choiceId = r.choice.id;
+  }
+
+  // 保存好感度规则
+  const affRows = document.querySelectorAll('#affRules .aff-row');
+  const rules = [];
+  affRows.forEach(r=>{
+    const cid = parseInt(r.querySelector('.affChar').value);
+    const delta = parseInt(r.querySelector('.affDelta').value)||0;
+    if(cid && delta!==0) rules.push({character_id:cid,delta});
+  });
+  if(rules.length>0) await api('/api/choices/'+choiceId+'/affection',{method:'POST',body:JSON.stringify({rules})});
+
+  // 保存条件 (先删后加)
+  const condRows = document.querySelectorAll('#condRules .cond-row');
+  // delete existing conditions for this choice
+  const existing = await api('/api/choices/scene/'+sceneId);
+  const existingChoice = (existing.choices||[]).find(x=>x.id===choiceId);
+  if(existingChoice && existingChoice.conditions) {
+    for(let cd of existingChoice.conditions) {
+      await api('/api/choices/conditions/'+cd.id,{method:'DELETE'});
+    }
+  }
+  for(let r of condRows) {
+    const cid = parseInt(r.querySelector('.condChar').value);
+    const op = r.querySelector('.condOp').value;
+    const val = parseInt(r.querySelector('.condVal').value)||0;
+    if(cid) await api('/api/choices/conditions',{method:'POST',body:JSON.stringify({target_type:'choice',target_id:choiceId,character_id:cid,operator:op,value:val})});
+  }
+
+  toast('保存成功'); closeModal(); editChoices(sceneId);
+}
+async function deleteChoice(id, sceneId) { if(!confirm('确定删除?')) return;
+  await api('/api/choices/'+id,{method:'DELETE'}); toast('已删除'); editChoices(sceneId); }
+
+// ===== Characters =====
+async function loadCharacters() {
+  const r = await api('/api/characters/all');
+  const chars = r.characters||[];
+  let rows = chars.map(c=>`<tr>
+    <td>${c.id}</td><td><span class="color-dot" style="background:${c.color}"></span>${c.name}</td>
+    <td>${c.personality||'-'}</td><td>${c.description?.slice(0,30)||'-'}</td>
+    <td>${c.is_hidden?'🔒 隐藏':'👁 可见'}</td>
+    <td>
+      <button class="btn btn-p btn-sm" onclick="editChar(${c.id})">编辑</button>
+    </td>
+  </tr>`).join('');
+  document.getElementById('mainContent').innerHTML = `
+    <h2>👩 角色管理</h2>
+    <div class="toolbar"><button class="btn btn-p" onclick="editChar(0)">+ 添加角色</button></div>
+    <table><thead><tr><th>ID</th><th>名称</th><th>性格</th><th>描述</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="6" class="empty">暂无角色</td></tr>'}</tbody></table>`;
+}
+async function editChar(id) {
+  let c = {name:'',description:'',personality:'',color:'#e91e63',sort_order:0,is_hidden:false,voice_actor:'',birthday:''};
+  if(id>0) {
+    const r = await api('/api/characters/'+id);
+    if(r.character) c = r.character;
+  }
+  showModal(id>0?'编辑角色':'添加角色',`
+    <div class="field"><label>角色名 *</label><input id="chName" value="${c.name||''}"></div>
+    <div class="field"><label>性格标签</label><input id="chPersonality" value="${c.personality||''}" placeholder="如: 温柔/善良/害羞"></div>
+    <div class="field"><label>描述</label><textarea id="chDesc">${c.description||''}</textarea></div>
+    <div class="field"><label>主题色</label><input id="chColor" type="color" value="${c.color||'#e91e63'}" style="width:60px;height:35px"></div>
+    <div class="field"><label>声优</label><input id="chVA" value="${c.voice_actor||''}"></div>
+    <div class="field"><label>生日</label><input id="chBirthday" value="${c.birthday||''}"></div>
+    <div class="field" style="display:flex;gap:16px;align-items:center"><label>隐藏角色</label><input type="checkbox" id="chHidden" ${c.is_hidden?'checked':''} style="width:auto"></div>
+    <div class="actions"><button class="btn btn-o" onclick="closeModal()">取消</button><button class="btn btn-p" onclick="saveChar(${id})">保存</button></div>`);
+}
+async function saveChar(id) {
+  const data = {
+    name: document.getElementById('chName').value,
+    personality: document.getElementById('chPersonality').value,
+    description: document.getElementById('chDesc').value,
+    color: document.getElementById('chColor').value,
+    voice_actor: document.getElementById('chVA').value,
+    birthday: document.getElementById('chBirthday').value,
+    is_hidden: document.getElementById('chHidden').checked
+  };
+  if(!data.name) return toast('请输入角色名');
+  const r = id>0 ? await api('/api/characters/'+id,{method:'PUT',body:JSON.stringify(data)})
+    : await api('/api/characters',{method:'POST',body:JSON.stringify(data)});
+  if(r.error) return toast(r.error);
+  toast('保存成功'); closeModal(); loadCharacters();
+}
+
+// ===== Endings =====
+async function loadEndings() {
+  const [er,cr] = await Promise.all([api('/api/endings'),api('/api/characters/all')]);
+  const endings = er.endings||[]; const chars = cr.characters||[];
+  const charMap = {}; chars.forEach(c=>charMap[c.id]=c);
+  let rows = endings.map(e=>`<tr>
+    <td>${e.id}</td><td>${e.title}</td><td>${e.type||'normal'}</td>
+    <td>${charMap[e.character_id]?.name||'-'}</td><td>${e.description?.slice(0,30)||'-'}</td>
+    <td>
+      <button class="btn btn-p btn-sm" onclick="editEnding(${e.id})">编辑</button>
+      <button class="btn btn-d btn-sm" onclick="deleteEnding(${e.id})">删除</button>
+    </td>
+  </tr>`).join('');
+  document.getElementById('mainContent').innerHTML = `
+    <h2>🏆 结局管理</h2>
+    <div class="toolbar"><button class="btn btn-p" onclick="editEnding(0)">+ 添加结局</button></div>
+    <table><thead><tr><th>ID</th><th>标题</th><th>类型</th><th>角色</th><th>描述</th><th>操作</th></tr></thead>
+    <tbody>${rows||'<tr><td colspan="6" class="empty">暂无结局</td></tr>'}</tbody></table>`;
+}
+async function editEnding(id) {
+  let e = {title:'',description:'',type:'normal',character_id:'',unlock_condition:'',sort_order:0};
+  if(id>0) { const r = await api('/api/endings'); const found = (r.endings||[]).find(x=>x.id===id); if(found) e = found; }
+  const cr = await api('/api/characters/all');
+  const chOpts = (cr.characters||[]).map(c=>`<option value="${c.id}" ${e.character_id==c.id?'selected':''}>${c.name}</option>`).join('');
+  showModal(id>0?'编辑结局':'添加结局',`
+    <div class="field"><label>结局标题 *</label><input id="eTitle" value="${e.title||''}"></div>
+    <div class="field"><label>描述</label><textarea id="eDesc">${e.description||''}</textarea></div>
+    <div class="field"><label>类型</label><select id="eType"><option value="perfect" ${e.type=='perfect'?'selected':''}>完美</option><option value="good" ${e.type=='good'?'selected':''}>好结局</option><option value="normal" ${e.type=='normal'?'selected':''}>普通</option><option value="bad" ${e.type=='bad'?'selected':''}>坏结局</option><option value="hidden" ${e.type=='hidden'?'selected':''}>隐藏</option></select></div>
+    <div class="field"><label>关联角色</label><select id="eChar"><option value="">无</option>${chOpts}</select></div>
+    <div class="field"><label>解锁条件描述</label><input id="eCond" value="${e.unlock_condition||''}"></div>
+    <div class="actions"><button class="btn btn-o" onclick="closeModal()">取消</button><button class="btn btn-p" onclick="saveEnding(${id})">保存</button></div>`);
+}
+async function saveEnding(id) {
+  const data = {
+    title: document.getElementById('eTitle').value,
+    description: document.getElementById('eDesc').value,
+    type: document.getElementById('eType').value,
+    character_id: document.getElementById('eChar').value ? parseInt(document.getElementById('eChar').value) : null,
+    unlock_condition: document.getElementById('eCond').value
+  };
+  if(!data.title) return toast('请输入标题');
+  const r = id>0 ? await api('/api/endings/'+id,{method:'PUT',body:JSON.stringify(data)})
+    : await api('/api/endings',{method:'POST',body:JSON.stringify(data)});
+  if(r.error) return toast(r.error);
+  toast('保存成功'); closeModal(); loadEndings();
+}
+async function deleteEnding(id) { if(!confirm('确定删除?')) return;
+  await api('/api/endings/'+id,{method:'DELETE'}); toast('已删除'); loadEndings(); }
+
+// ===== Init =====
+if(token) {
+  api('/api/auth/me').then(r=>{
+    if(r.user && r.user.role!=='player') {
+      document.getElementById('adminUser').textContent = r.user.nickname||r.user.username;
+      document.getElementById('loginWrap').style.display='none';
+      document.getElementById('appWrap').classList.add('show');
+      loadDashboard();
+    }
+  }).catch(()=>{localStorage.removeItem('plot_game_admin_token');});
+}
+
+document.getElementById('loginPass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+</script>
+</body>
+</html>
