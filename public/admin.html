@@ -285,7 +285,7 @@ async function uploadVideo() {
   uploadWithProgress('/api/videos', fd, () => { toast('上传成功!'); loadVideos(); });
 }
 async function deleteVideo(id) { if(!confirm('确定删除? 关联场景也将被删除!')) return;
-  await api('/api/videos/'+id,{method:'DELETE'}); toast('已删除'); loadVideos(); }
+  await api('/api/media/'+id,{method:'DELETE'}); toast('已删除'); loadVideos(); }
 
 // 视频播放
 function playVideoById(id) {
@@ -339,7 +339,7 @@ function replaceVideo(id) {
     const fd = new FormData();
     fd.append('video', file);
     
-    uploadWithProgress('/api/videos/' + id + '/replace', fd, () => { toast('✅ 视频已替换!'); loadVideos(); });
+    uploadWithProgress('/api/media/' + id + '/replace', fd, () => { toast('✅ 视频已替换!'); loadVideos(); });
     loadVideos();
   };
   input.click();
@@ -348,8 +348,8 @@ function replaceVideo(id) {
 // ===== 音轨/字幕管理 =====
 async function manageMedia(videoId, title) {
   const [aRes, sRes] = await Promise.all([
-    api('/api/videos/' + videoId + '/audios'),
-    api('/api/videos/' + videoId + '/subtitles')
+    api('/api/media/' + videoId + '/audios'),
+    api('/api/media/' + videoId + '/subtitles')
   ]);
   const audios = aRes.audios || [];
   const subtitles = sRes.subtitles || [];
@@ -412,7 +412,7 @@ async function uploadMedia(videoId, type) {
   fd.append('label', label);
   fd.append('is_default', isDefault);
 
-  const url = '/api/videos/' + videoId + '/' + (type === 'audio' ? 'audios' : 'subtitles');
+  const url = '/api/media/' + videoId + '/' + (type === 'audio' ? 'audios' : 'subtitles');
   uploadWithProgress(url, fd, () => {
     toast('✅ 上传成功');
     // 重新打开弹窗
@@ -423,7 +423,7 @@ async function uploadMedia(videoId, type) {
 
 async function deleteMedia(videoId, type, id) {
   if (!confirm('确定删除？')) return;
-  const url = '/api/videos/' + videoId + '/' + (type === 'audio' ? 'audios' : 'subtitles') + '/' + id;
+  const url = '/api/media/' + videoId + '/' + (type === 'audio' ? 'audios' : 'subtitles') + '/' + id;
   const r = await api(url, { method: 'DELETE' });
   if (r.error) return toast(r.error);
   toast('已删除');
