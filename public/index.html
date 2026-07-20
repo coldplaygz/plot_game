@@ -48,6 +48,9 @@ body{font-family:'Game',sans-serif;background:#000;color:#fff;overflow:hidden;us
 #gameVideo{width:100%;height:100%;object-fit:contain;background:#000;position:relative;z-index:0}
 
 /* 选择覆盖层 */
+.skip-btn{position:absolute;bottom:100px;right:24px;z-index:90;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#ccc;padding:8px 20px;border-radius:20px;font-size:14px;cursor:pointer;display:none;transition:all .2s}
+.skip-btn.show{display:block}
+.skip-btn:hover{background:rgba(255,255,255,0.2);color:#fff}
 .choice-overlay{position:absolute;bottom:0;left:0;right:0;padding:30px 40px 50px;background:linear-gradient(transparent,rgba(0,0,0,0.85) 40%);display:none;z-index:100}
 .choice-overlay.active{display:block}
 .choice-timer{text-align:center;margin-bottom:16px}
@@ -185,6 +188,7 @@ body{font-family:'Game',sans-serif;background:#000;color:#fff;overflow:hidden;us
     <div class="choices" id="choicesContainer"></div>
   </div>
   <div class="aff-panel" id="affPanel"></div>
+  <button class="skip-btn" id="skipBtn" onclick="skipToChoices()">跳过 ⏭</button>
 </div>
 
 <!-- ==================== 存档面板 ==================== -->
@@ -322,13 +326,17 @@ async function loadScene(scene) {
 
   if (hasChoices) {
     if (delay > 0) {
+      // 显示跳过按钮
+      document.getElementById('skipBtn').classList.add('show');
       // 延迟弹出：视频播到第N秒时暂停并显示选项
       gameState._choiceDelayId = setTimeout(() => {
-        v.pause();  // 暂停视频
+        document.getElementById('skipBtn').classList.remove('show');
+        v.pause();
         renderChoices(scene.choices, (scene.choice_timer == null || scene.choice_timer === 0) ? 0 : (scene.choice_timer || 10));
       }, delay * 1000);
     } else {
-      // 立即显示（或等视频播完）
+      document.getElementById('skipBtn').classList.remove('show');
+      // 等视频播完再显示选项
       v.onended = () => {
         if (!gameState.isEnding) {
           renderChoices(scene.choices, (scene.choice_timer == null || scene.choice_timer === 0) ? 0 : (scene.choice_timer || 10));
@@ -337,6 +345,7 @@ async function loadScene(scene) {
     }
   } else {
     hideChoices();
+    document.getElementById('skipBtn').classList.remove('show');
   }
 
   // 结局处理
@@ -346,6 +355,20 @@ async function loadScene(scene) {
 }
 
 // ========== 选择系统 ==========
+function skipToChoices() {
+  if (gameState._choiceDelayId) {
+    clearTimeout(gameState._choiceDelayId);
+    gameState._choiceDelayId = null;
+  }
+  document.getElementById('skipBtn').classList.remove('show');
+  const v = document.getElementById('gameVideo');
+  v.pause();
+  const scene = gameState.currentScene;
+  if (scene && scene.choices) {
+    renderChoices(scene.choices, (scene.choice_timer == null || scene.choice_timer === 0) ? 0 : (scene.choice_timer || 10));
+  }
+}
+
 function renderChoices(choices, defaultTimer) {
   const overlay = document.getElementById('choiceOverlay');
   const container = document.getElementById('choicesContainer');
