@@ -84,6 +84,12 @@ router.get('/scene/:sceneId', async (req, res) => {
     const scene = rows[0];
     scene.choices = await getSceneChoices(sceneId, currentAffections);
     
+    // 音轨 & 字幕
+    const [audios] = await pool.query('SELECT * FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    const [subtitles] = await pool.query('SELECT * FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    scene.audios = audios;
+    scene.subtitles = subtitles;
+    
     // choice_delay 未设置时默认取视频完整时长
     if ((!scene.choice_delay || scene.choice_delay === 0) && scene.choices.length > 0) {
       scene.choice_delay = Math.floor(scene.duration || 0);

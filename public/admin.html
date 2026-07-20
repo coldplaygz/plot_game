@@ -225,8 +225,9 @@ async function loadVideos() {
     <td>${v.scene_count||0}个场景</td>
     <td>${new Date(v.created_at).toLocaleDateString()}</td>
     <td>
-      <button class="btn btn-g btn-sm" onclick="playVideoById(${v.id})">▶ 播放</button>
-      <button class="btn btn-o btn-sm" onclick="replaceVideo(${v.id})">🔄 替换</button>
+      <button class="btn btn-g btn-sm" onclick="playVideoById(${v.id})">▶</button>
+      <button class="btn btn-o btn-sm" onclick="manageMedia(${v.id},'${v.title.replace(/'/g,'')}')">🎵字幕</button>
+      <button class="btn btn-o btn-sm" onclick="replaceVideo(${v.id})">🔄</button>
       <button class="btn btn-d btn-sm" onclick="deleteVideo(${v.id})">删除</button>
     </td>
   </tr>`).join('');
@@ -342,6 +343,92 @@ function replaceVideo(id) {
     loadVideos();
   };
   input.click();
+}
+
+// ===== 音轨/字幕管理 =====
+async function manageMedia(videoId, title) {
+  const [aRes, sRes] = await Promise.all([
+    api('/api/videos/' + videoId + '/audios'),
+    api('/api/videos/' + videoId + '/subtitles')
+  ]);
+  const audios = aRes.audios || [];
+  const subtitles = sRes.subtitles || [];
+
+  const audioRows = audios.map(a => `<tr>
+    <td>${a.language}</td><td>${a.label}</td><td>${(a.file_size/1024).toFixed(1)}KB</td>
+    <td>${a.is_default?'✅':''}</td>
+    <td><button class="btn btn-d btn-sm" onclick="deleteMedia(${videoId},'audio',${a.id})">删除</button></td>
+  </tr>`).join('') || '<tr><td colspan="5" style="color:#555">暂无音轨</td></tr>';
+
+  const subRows = subtitles.map(s => `<tr>
+    <td>${s.language}</td><td>${s.label}</td><td>${(s.file_size/1024).toFixed(1)}KB</td>
+    <td>${s.is_default?'✅':''}</td>
+    <td><button class="btn btn-d btn-sm" onclick="deleteMedia(${videoId},'subtitle',${s.id})">删除</button></td>
+  </tr>`).join('') || '<tr><td colspan="5" style="color:#555">暂无字幕</td></tr>';
+
+  showModal('🎵 音轨 & 字幕 - ' + title, `
+    <div class="sub-section"><h4>🎤 音轨</h4>
+      <table><thead><tr><th>语言</th><th>标签</th><th>大小</th><th>默认</th><th>操作</th></tr></thead>
+      <tbody>${audioRows}</tbody></table>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <select id="aLang"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option></select>
+        <input id="aLabel" placeholder="标签(如: 中文配音)" style="flex:1">
+        <input type="file" id="aFile" accept=".mp3,.m4a,.aac,.ogg,.wav" style="width:120px">
+        <label style="font-size:12px;color:#888;white-space:nowrap"><input type="checkbox" id="aDef"> 默认</label>
+        <button class="btn btn-p btn-sm" onclick="uploadMedia(${videoId},'audio')">上传音轨</button>
+      </div>
+    </div>
+    <div class="sub-section"><h4>📝 字幕</h4>
+      <table><thead><tr><th>语言</th><th>标签</th><th>大小</th><th>默认</th><th>操作</th></tr></thead>
+      <tbody>${subRows}</tbody></table>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <select id="sLang"><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option></select>
+        <input id="sLabel" placeholder="标签(如: 中文字幕)" style="flex:1">
+        <input type="file" id="sFile" accept=".srt,.vtt,.ass,.ssa" style="width:120px">
+        <label style="font-size:12px;color:#888;white-space:nowrap"><input type="checkbox" id="sDef"> 默认</label>
+        <button class="btn btn-p btn-sm" onclick="uploadMedia(${videoId},'subtitle')">上传字幕</button>
+      </div>
+    </div>
+    <div class="actions"><button class="btn btn-o" onclick="manageMedia(${videoId},'${title.replace(/'/g,'')}')">刷新</button>
+    <button class="btn btn-o" onclick="closeModal()">关闭</button></div>
+  `, true);
+}
+
+async function uploadMedia(videoId, type) {
+  const langId = type === 'audio' ? 'aLang' : 'sLang';
+  const labelId = type === 'audio' ? 'aLabel' : 'sLabel';
+  const fileId = type === 'audio' ? 'aFile' : 'sFile';
+  const defId = type === 'audio' ? 'aDef' : 'sDef';
+
+  const file = document.getElementById(fileId).files[0];
+  if (!file) return toast('请选择文件');
+  const language = document.getElementById(langId).value;
+  const label = document.getElementById(labelId).value.trim() || language;
+  const isDefault = document.getElementById(defId).checked ? '1' : '0';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('language', language);
+  fd.append('label', label);
+  fd.append('is_default', isDefault);
+
+  const url = '/api/videos/' + videoId + '/' + (type === 'audio' ? 'audios' : 'subtitles');
+  uploadWithProgress(url, fd, () => {
+    toast('✅ 上传成功');
+    // 重新打开弹窗
+    const title = document.querySelector('#modalBox h3').textContent.replace('🎵 音轨 & 字幕 - ', '');
+    manageMedia(videoId, title);
+  });
+}
+
+async function deleteMedia(videoId, type, id) {
+  if (!confirm('确定删除？')) return;
+  const url = '/api/videos/' + videoId + '/' + (type === 'audio' ? 'audios' : 'subtitles') + '/' + id;
+  const r = await api(url, { method: 'DELETE' });
+  if (r.error) return toast(r.error);
+  toast('已删除');
+  const title = document.querySelector('#modalBox h3').textContent.replace('🎵 音轨 & 字幕 - ', '');
+  manageMedia(videoId, title);
 }
 
 // ===== Scenes =====

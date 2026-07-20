@@ -51,6 +51,12 @@ body{font-family:'Game',sans-serif;background:#000;color:#fff;overflow:hidden;us
 .skip-btn{position:absolute;bottom:100px;right:24px;z-index:90;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#ccc;padding:8px 20px;border-radius:20px;font-size:14px;cursor:pointer;display:none;transition:all .2s}
 .skip-btn.show{display:block}
 .skip-btn:hover{background:rgba(255,255,255,0.2);color:#fff}
+/* 语言选择栏 */
+.lang-bar{position:absolute;top:60px;right:16px;z-index:90;display:none;flex-direction:column;gap:4px}
+.lang-bar.show{display:flex}
+.lang-bar select,.lang-bar label{background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.15);border-radius:6px;color:#ccc;padding:4px 8px;font-size:12px;cursor:pointer}
+.lang-bar label{display:flex;align-items:center;gap:4px;cursor:pointer}
+.lang-bar input[type=checkbox]{accent-color:#7c3aed}
 .choice-overlay{position:absolute;bottom:0;left:0;right:0;padding:30px 40px 50px;background:linear-gradient(transparent,rgba(0,0,0,0.85) 40%);display:none;z-index:100}
 .choice-overlay.active{display:block}
 .choice-timer{text-align:center;margin-bottom:16px}
@@ -189,6 +195,11 @@ body{font-family:'Game',sans-serif;background:#000;color:#fff;overflow:hidden;us
   </div>
   <div class="aff-panel" id="affPanel"></div>
   <button class="skip-btn" id="skipBtn" onclick="skipToChoices()">跳过 ⏭</button>
+  <div class="lang-bar" id="langBar">
+    <select id="audioSelect" onchange="switchAudio()" style="display:none"></select>
+    <label id="subToggle" style="display:none"><input type="checkbox" id="subCheck" onchange="toggleSubtitles()"> 字幕</label>
+    <select id="subSelect" onchange="switchSubtitle()" style="display:none"></select>
+  </div>
 </div>
 
 <!-- ==================== 存档面板 ==================== -->
@@ -319,6 +330,9 @@ async function loadScene(scene) {
 
   // 好感度面板
   renderAffectionPanel();
+
+  // 语言/音轨/字幕
+  initLanguageBar(scene);
 
   // 根据 choice_delay 决定何时弹出选项
   const delay = scene.choice_delay || 0; // 秒
@@ -469,6 +483,99 @@ function showAffectionChange(change) {
 }
 
 // ========== 好感度面板 ==========
+// ========== 语言/音轨/字幕 ==========
+let currentAudioEl = null;
+
+function initLanguageBar(scene) {
+  const langBar = document.getElementById('langBar');
+  const audioSel = document.getElementById('audioSelect');
+  const subToggle = document.getElementById('subToggle');
+  const subSel = document.getElementById('subSelect');
+  const subCheck = document.getElementById('subCheck');
+
+  const audios = scene.audios || [];
+  if (audios.length > 0) {
+    audioSel.style.display = 'block';
+    audioSel.innerHTML = audios.map((a, i) => 
+      '<option value="' + i + '" ' + (a.is_default ? 'selected' : '') + '>🎤 ' + a.label + '</option>'
+    ).join('');
+    const defaultIdx = audios.findIndex(a => a.is_default);
+    applyAudio(audios[defaultIdx >= 0 ? defaultIdx : 0]);
+  } else { audioSel.style.display = 'none'; stopAltAudio(); }
+
+  const subs = scene.subtitles || [];
+  if (subs.length > 0) {
+    subToggle.style.display = 'flex';
+    subSel.style.display = 'block';
+    subSel.innerHTML = subs.map((s, i) =>
+      '<option value="' + i + '" ' + (s.is_default ? 'selected' : '') + '>📝 ' + s.label + '</option>'
+    ).join('');
+    loadSubtitleTracks(subs);
+    subCheck.checked = true;
+    toggleSubtitles();
+  } else { subToggle.style.display = 'none'; subSel.style.display = 'none'; clearSubtitleTracks(); }
+
+  langBar.classList.toggle('show', audios.length > 0 || subs.length > 0);
+}
+
+function applyAudio(audio) {
+  stopAltAudio();
+  if (!audio) return;
+  const v = document.getElementById('gameVideo');
+  const a = document.createElement('audio');
+  a.src = '/' + (audio.file_path || '').replace(/\\/g, '/');
+  a.load();
+  v.muted = true;
+  v.onplay = () => { a.currentTime = v.currentTime; a.play().catch(()=>{}); };
+  v.onpause = () => a.pause();
+  v.onseeked = () => { a.currentTime = v.currentTime; };
+  a.play().catch(() => {});
+  currentAudioEl = a;
+}
+
+function stopAltAudio() {
+  if (currentAudioEl) { currentAudioEl.pause(); currentAudioEl.remove(); currentAudioEl = null; }
+  document.getElementById('gameVideo').muted = false;
+}
+
+function switchAudio() {
+  const idx = parseInt(document.getElementById('audioSelect').value);
+  const audios = gameState.currentScene?.audios || [];
+  if (audios[idx]) applyAudio(audios[idx]);
+}
+
+function loadSubtitleTracks(subs) {
+  clearSubtitleTracks();
+  const v = document.getElementById('gameVideo');
+  subs.forEach(s => {
+    const track = document.createElement('track');
+    track.kind = 'subtitles'; track.label = s.label; track.srclang = s.language;
+    track.src = '/' + (s.file_path || '').replace(/\\/g, '/');
+    track.id = 'track-' + s.id;
+    v.appendChild(track);
+  });
+}
+
+function clearSubtitleTracks() {
+  document.getElementById('gameVideo').querySelectorAll('track').forEach(t => t.remove());
+}
+
+function toggleSubtitles() {
+  const v = document.getElementById('gameVideo');
+  const checked = document.getElementById('subCheck').checked;
+  for (let i = 0; i < v.textTracks.length; i++) {
+    v.textTracks[i].mode = checked ? 'showing' : 'hidden';
+  }
+}
+
+function switchSubtitle() {
+  const v = document.getElementById('gameVideo');
+  const idx = parseInt(document.getElementById('subSelect').value);
+  for (let i = 0; i < v.textTracks.length; i++) {
+    v.textTracks[i].mode = (i === idx && document.getElementById('subCheck').checked) ? 'showing' : 'hidden';
+  }
+}
+
 function renderAffectionPanel() {
   const panel = document.getElementById('affPanel');
   panel.innerHTML = '';

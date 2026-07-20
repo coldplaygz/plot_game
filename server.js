@@ -10,6 +10,7 @@ const endingRoutes = require('./routes/endings');
 const videoRoutes = require('./routes/videos');
 const saveRoutes = require('./routes/saves');
 const playRoutes = require('./routes/play');
+const mediaRoutes = require('./routes/media');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -66,6 +67,7 @@ app.use('/api/endings', endingRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/saves', saveRoutes);
 app.use('/api/play', playRoutes);
+app.use('/api/videos', mediaRoutes);  // 音轨/字幕 挂载在同路径下
 
 // 404
 app.use((req, res) => res.status(404).json({ error: '接口不存在' }));
