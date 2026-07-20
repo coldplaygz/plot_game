@@ -7,6 +7,17 @@ const { authenticate, authorize } = require('../middleware/auth');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(ffmpegPath);
+
+// ffprobe: 优先用系统路径，否则用npm包
+const sysFfprobePaths = ['/usr/bin/ffprobe', '/usr/local/bin/ffprobe'];
+let ffprobeFound = false;
+for (const p of sysFfprobePaths) {
+  if (fs.existsSync(p)) { ffmpeg.setFfprobePath(p); ffprobeFound = true; break; }
+}
+if (!ffprobeFound) {
+  const localFfprobe = path.join(path.dirname(ffmpegPath), 'ffprobe');
+  if (fs.existsSync(localFfprobe)) ffmpeg.setFfprobePath(localFfprobe);
+}
 require('dotenv').config();
 
 // 探测视频时长
