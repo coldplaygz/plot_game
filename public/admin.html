@@ -84,6 +84,11 @@ tr:hover td{background:#1a1a3e}
 @keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-20px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 @keyframes toastOut{from{opacity:1}to{opacity:0}}
 .color-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+/* Upload progress */
+.upload-progress{display:none;width:100%;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;margin-top:8px;overflow:hidden}
+.upload-progress.active{display:block}
+.upload-progress .bar{height:100%;background:linear-gradient(90deg,#7c3aed,#e040fb);transition:width .3s;width:0;border-radius:2px}
+.upload-progress .txt{font-size:11px;color:#888;margin-top:3px}
 /* Video player modal */
 .video-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.92);z-index:300;align-items:center;justify-content:center;flex-direction:column}
 .video-modal.active{display:flex}
@@ -232,18 +237,51 @@ async function loadVideos() {
       <input id="videoTitle" placeholder="视频标题" style="max-width:200px">
       <button class="btn btn-p" onclick="uploadVideo()">上传视频</button>
     </div>
+    <div class="upload-progress" id="uploadProgress">
+      <div class="bar" id="uploadBar"></div>
+      <div class="txt" id="uploadTxt"></div>
+    </div>
     <table><thead><tr><th>ID</th><th>标题</th><th>文件名</th><th>大小</th><th>时长</th><th>关联</th><th>日期</th><th>操作</th></tr></thead>
     <tbody>${rows||'<tr><td colspan="8" class="empty">暂无视频</td></tr>'}</tbody></table>`;
 }
+function uploadWithProgress(url, formData, onSuccess) {
+  const prog = document.getElementById('uploadProgress');
+  const bar = document.getElementById('uploadBar');
+  const txt = document.getElementById('uploadTxt');
+  prog.classList.add('active'); bar.style.width = '0'; txt.textContent = '0%';
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', API + url);
+  xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round(e.loaded / e.total * 100);
+      bar.style.width = pct + '%';
+      txt.textContent = pct + '%  (' + (e.loaded/1024/1024).toFixed(1) + 'MB / ' + (e.total/1024/1024).toFixed(1) + 'MB)';
+    }
+  };
+
+  xhr.onload = () => {
+    prog.classList.remove('active');
+    try {
+      const r = JSON.parse(xhr.responseText);
+      if (r.error) { toast('上传失败: ' + r.error); return; }
+      onSuccess(r);
+    } catch(e) { toast('响应解析失败'); }
+  };
+
+  xhr.onerror = () => { prog.classList.remove('active'); toast('网络错误'); };
+  xhr.send(formData);
+}
+
 async function uploadVideo() {
   const file = document.getElementById('videoFile').files[0];
   const title = document.getElementById('videoTitle').value.trim();
   if(!file) return toast('请选择文件');
   if(!title) return toast('请输入标题');
   const fd = new FormData(); fd.append('video',file); fd.append('title',title);
-  const r = await fetch(API+'/api/videos',{method:'POST',headers:{'Authorization':'Bearer '+token},body:fd}).then(r=>r.json());
-  if(r.error) return toast(r.error);
-  toast('上传成功!'); loadVideos();
+  uploadWithProgress('/api/videos', fd, () => { toast('上传成功!'); loadVideos(); });
 }
 async function deleteVideo(id) { if(!confirm('确定删除? 关联场景也将被删除!')) return;
   await api('/api/videos/'+id,{method:'DELETE'}); toast('已删除'); loadVideos(); }
@@ -300,15 +338,7 @@ function replaceVideo(id) {
     const fd = new FormData();
     fd.append('video', file);
     
-    toast('正在上传替换...');
-    const r = await fetch(API + '/api/videos/' + id + '/replace', {
-      method: 'PUT',
-      headers: { 'Authorization': 'Bearer ' + token },
-      body: fd
-    }).then(r => r.json());
-    
-    if (r.error) return toast('替换失败: ' + r.error);
-    toast('✅ 视频已替换!');
+    uploadWithProgress('/api/videos/' + id + '/replace', fd, () => { toast('✅ 视频已替换!'); loadVideos(); });
     loadVideos();
   };
   input.click();
