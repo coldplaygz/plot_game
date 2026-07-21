@@ -274,9 +274,9 @@ async function loadVideos() {
       <div class="txt" id="uploadTxt"></div>
     </div>
     <table><thead><tr><th>ID</th><th>标题</th><th>文件名</th><th>大小</th><th>时长</th><th>关联</th><th>日期</th><th>操作</th></tr></thead>
-<tbody>${rows||'<tr><td colspan="8" class="empty">暂无数据</td></tr>'}</tbody></table>
-    ${renderPagination(currentTab, all.length, 'load'+currentTab.charAt(0).toUpperCase()+currentTab.slice(1))}
-  \`;
+    <tbody>${rows||'<tr><td colspan="8" class="empty">暂无视频</td></tr>'}</tbody></table>
+    ${renderPagination('videos', all.length, 'loadVideos')}
+  `;
 }
 function uploadWithProgress(url, formData, onSuccess) {
   const prog = document.getElementById('uploadProgress');
@@ -487,9 +487,9 @@ async function loadScenes() {
       <span style="color:#666;font-size:12px;margin-left:12px">⭐ = 起始场景 | 🏁 = 结局场景</span>
     </div>
     <table><thead><tr><th>ID</th><th>标题</th><th>章节</th><th>视频</th><th>选项数</th><th>结局</th><th>操作</th></tr></thead>
-<tbody>${rows||'<tr><td colspan="8" class="empty">暂无数据</td></tr>'}</tbody></table>
-    ${renderPagination(currentTab, all.length, 'load'+currentTab.charAt(0).toUpperCase()+currentTab.slice(1))}
-  \`;
+    <tbody>${rows||'<tr><td colspan="8" class="empty">暂无视频</td></tr>'}</tbody></table>
+    ${renderPagination('scenes', all.length, 'loadScenes')}
+  `;
 }
 
 async function editScene(id) {
@@ -692,9 +692,9 @@ async function loadCharacters() {
     <h2>👩 角色管理</h2>
     <div class="toolbar"><button class="btn btn-p" onclick="editChar(0)">+ 添加角色</button></div>
     <table><thead><tr><th>ID</th><th>名称</th><th>性格</th><th>描述</th><th>状态</th><th>操作</th></tr></thead>
-<tbody>${rows||'<tr><td colspan="8" class="empty">暂无数据</td></tr>'}</tbody></table>
-    ${renderPagination(currentTab, all.length, 'load'+currentTab.charAt(0).toUpperCase()+currentTab.slice(1))}
-  \`;
+    <tbody>${rows||'<tr><td colspan="8" class="empty">暂无视频</td></tr>'}</tbody></table>
+    ${renderPagination('characters', all.length, 'loadCharacters')}
+  `;
 }
 async function editChar(id) {
   let c = {name:'',description:'',personality:'',color:'#e91e63',sort_order:0,is_hidden:false,voice_actor:'',birthday:''};
@@ -749,9 +749,9 @@ async function loadEndings() {
     <h2>🏆 结局管理</h2>
     <div class="toolbar"><button class="btn btn-p" onclick="editEnding(0)">+ 添加结局</button></div>
     <table><thead><tr><th>ID</th><th>标题</th><th>类型</th><th>角色</th><th>描述</th><th>操作</th></tr></thead>
-<tbody>${rows||'<tr><td colspan="8" class="empty">暂无数据</td></tr>'}</tbody></table>
-    ${renderPagination(currentTab, all.length, 'load'+currentTab.charAt(0).toUpperCase()+currentTab.slice(1))}
-  \`;
+    <tbody>${rows||'<tr><td colspan="8" class="empty">暂无视频</td></tr>'}</tbody></table>
+    ${renderPagination('endings', all.length, 'loadEndings')}
+  `;
 }
 async function editEnding(id) {
   let e = {title:'',description:'',type:'normal',character_id:'',unlock_condition:'',sort_order:0};
