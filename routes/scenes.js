@@ -7,15 +7,27 @@ const router = express.Router();
 // 获取所有场景（管理用）
 router.get('/', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
+    const gameId = req.query.game_id ? parseInt(req.query.game_id) : null;
+
+    let whereClause = '';
+    const params = [];
+    if (gameId) {
+      whereClause = ' WHERE s.game_id = ?';
+      params.push(gameId);
+    }
+
     const [rows] = await pool.query(`
       SELECT s.*, v.title AS video_title, v.file_path, v.duration,
              e.title AS ending_title,
+             g.title AS game_title,
              (SELECT COUNT(*) FROM choices c WHERE c.scene_id = s.id) AS choice_count
       FROM scenes s
       LEFT JOIN videos v ON s.video_id = v.id
       LEFT JOIN endings e ON s.ending_id = e.id
+      LEFT JOIN games g ON s.game_id = g.id
+      ${whereClause}
       ORDER BY s.sort_order ASC
-    `);
+    `, params);
     res.json({ scenes: rows });
   } catch (err) {
     console.error('[Scenes] 获取失败:', err);
@@ -87,9 +99,9 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
     }
 
     const [result] = await pool.query(
-      `INSERT INTO scenes (video_id, title, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [video_id, title, description || '', chapter || null, is_start ? 1 : 0, is_ending ? 1 : 0,
+      `INSERT INTO scenes (video_id, title, title_i18n, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [video_id, title, req.body.title_i18n || null, description || '', chapter || null, is_start ? 1 : 0, is_ending ? 1 : 0,
        ending_id || null, choice_timer || 10, choice_delay || 0, sort_order || 0]
     );
     res.status(201).json({ message: '场景创建成功', scene: { id: result.insertId, title } });

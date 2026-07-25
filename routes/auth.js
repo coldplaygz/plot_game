@@ -9,10 +9,48 @@ const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'plot_game_jwt_secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '72h';
 
+// 维护模式中间件
+async function maintenanceCheck(req, res, next) {
+  // 登录和注册始终允许（管理员需登录进入系统，注册由 reg_enabled 单独控制）
+  if (req.path === '/login' || req.path === '/register') return next();
+
+  try {
+    const [rows] = await pool.query("SELECT config_value FROM system_config WHERE config_key='maintenance_mode'");
+    if (rows[0]?.config_value === '1') {
+      // 管理员仍可访问
+      const token = req.headers.authorization?.replace('Bearer ', '');
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET);
+          if (decoded.role === 'admin') return next();
+        } catch (e) { /* token invalid, fall through */ }
+      }
+      return res.status(503).json({ error: '系统维护中，请稍后再试' });
+    }
+  } catch (e) { /* ignore */ }
+  next();
+}
+
+// 应用到需要拦截的路由
+router.use(maintenanceCheck);
+
+// 用户对象精选字段
+function pickUser(u) {
+  return {
+    id: u.id, username: u.username, nickname: u.nickname, role: u.role,
+    gender: u.gender, age: u.age, preferences: u.preferences, avatar: u.avatar,
+    points: u.points || 0
+  };
+}
+
 // 注册
 router.post('/register', async (req, res) => {
   try {
-    const { username, password, nickname } = req.body;
+    // 检查是否开放注册
+    const [cfg] = await pool.query("SELECT config_value FROM system_config WHERE config_key='reg_enabled'");
+    if (cfg[0]?.config_value === '0') return res.status(403).json({ error: '暂不开放注册' });
+
+    const { username, password, nickname, gender, age, preferences } = req.body;
     if (!username || !password) return res.status(400).json({ error: '用户名和密码不能为空' });
     if (username.length < 3) return res.status(400).json({ error: '用户名至少3个字符' });
     if (password.length < 6) return res.status(400).json({ error: '密码至少6位' });
@@ -22,14 +60,14 @@ router.post('/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const [result] = await pool.query(
-      'INSERT INTO users (username, password_hash, nickname, role) VALUES (?, ?, ?, ?)',
-      [username, passwordHash, nickname || username, 'player']
+      'INSERT INTO users (username, password_hash, nickname, gender, age, preferences, role) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [username, passwordHash, nickname || username, gender || null, age ? parseInt(age) : null, preferences || null, 'player']
     );
 
     const token = jwt.sign({ id: result.insertId, username, role: 'player' }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     res.status(201).json({
       token,
-      user: { id: result.insertId, username, nickname: nickname || username, role: 'player' }
+      user: { id: result.insertId, username, nickname: nickname || username, role: 'player', gender: gender || null, age: age ? parseInt(age) : null, preferences: preferences || null, points: 0 }
     });
   } catch (err) {
     console.error('[Auth] 注册失败:', err);
@@ -44,7 +82,7 @@ router.post('/login', async (req, res) => {
     if (!username || !password) return res.status(400).json({ error: '用户名和密码不能为空' });
 
     const [rows] = await pool.query(
-      'SELECT id, username, password_hash, role, nickname FROM users WHERE username = ? AND is_active = 1',
+      'SELECT * FROM users WHERE username = ? AND is_active = 1',
       [username]
     );
     if (rows.length === 0) return res.status(401).json({ error: '用户名或密码错误' });
@@ -54,10 +92,7 @@ router.post('/login', async (req, res) => {
     if (!isMatch) return res.status(401).json({ error: '用户名或密码错误' });
 
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-    res.json({
-      token,
-      user: { id: user.id, username: user.username, role: user.role, nickname: user.nickname }
-    });
+    res.json({ token, user: pickUser(user) });
   } catch (err) {
     console.error('[Auth] 登录失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
@@ -67,13 +102,32 @@ router.post('/login', async (req, res) => {
 // 获取当前用户
 router.get('/me', authenticate, async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT id, username, nickname, role, avatar, created_at FROM users WHERE id = ?',
-      [req.user.id]
-    );
+    const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.user.id]);
     if (rows.length === 0) return res.status(404).json({ error: '用户不存在' });
-    res.json({ user: rows[0] });
+    res.json({ user: pickUser(rows[0]) });
   } catch (err) {
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 更新用户资料
+router.put('/me', authenticate, async (req, res) => {
+  try {
+    const { nickname, gender, age, preferences } = req.body;
+    const fields = [], values = [];
+    if (nickname !== undefined) { fields.push('nickname=?'); values.push(nickname); }
+    if (gender !== undefined) { fields.push('gender=?'); values.push(gender || null); }
+    if (age !== undefined) { fields.push('age=?'); values.push(age ? parseInt(age) : null); }
+    if (preferences !== undefined) { fields.push('preferences=?'); values.push(preferences || null); }
+    if (fields.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
+
+    values.push(req.user.id);
+    await pool.query(`UPDATE users SET ${fields.join(',')} WHERE id=?`, values);
+
+    const [rows] = await pool.query('SELECT * FROM users WHERE id=?', [req.user.id]);
+    res.json({ user: pickUser(rows[0]), message: '资料已更新' });
+  } catch (err) {
+    console.error('[Auth] 更新失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });

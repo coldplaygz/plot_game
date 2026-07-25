@@ -36,6 +36,9 @@ async function initDatabase() {
         nickname VARCHAR(100) DEFAULT NULL,
         avatar VARCHAR(500) DEFAULT NULL,
         role ENUM('admin', 'editor', 'player') NOT NULL DEFAULT 'player',
+        gender ENUM('male','female','other') DEFAULT NULL COMMENT '性别',
+        age TINYINT UNSIGNED DEFAULT NULL COMMENT '年龄',
+        preferences VARCHAR(500) DEFAULT NULL COMMENT '喜好标签',
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -65,6 +68,7 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS endings (
         id INT AUTO_INCREMENT PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
+        title_i18n TEXT DEFAULT NULL COMMENT '多语言标题 JSON',
         description TEXT,
         image VARCHAR(500) DEFAULT NULL,
         type ENUM('perfect', 'good', 'normal', 'bad', 'hidden') DEFAULT 'normal',
@@ -76,16 +80,35 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 4. 视频表 ============
+    // ============ 4. 游戏表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS games (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        title_i18n TEXT DEFAULT NULL COMMENT '多语言标题 JSON',
+        cover_image VARCHAR(500) DEFAULT NULL COMMENT '封面图路径',
+        description TEXT COMMENT '游戏描述',
+        description_i18n TEXT DEFAULT NULL COMMENT '多语言描述 JSON',
+        category VARCHAR(100) DEFAULT NULL COMMENT '分类标签',
+        sort_order INT DEFAULT 0,
+        is_published TINYINT(1) DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+
+    // ============ 5. 视频表 ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS videos (
         id INT AUTO_INCREMENT PRIMARY KEY,
         title VARCHAR(255) NOT NULL,
+        title_i18n TEXT DEFAULT NULL COMMENT '多语言标题 JSON',
         description TEXT,
         filename VARCHAR(500) NOT NULL,
         file_path VARCHAR(500) NOT NULL,
         file_size BIGINT DEFAULT 0,
         mime_type VARCHAR(100) DEFAULT 'video/mp4',
+        transcode_status VARCHAR(20) DEFAULT 'none' COMMENT 'none|queued|transcoding|done|failed',
         duration FLOAT DEFAULT 0,
         thumbnail VARCHAR(500) DEFAULT NULL,
         uploaded_by INT DEFAULT NULL,
@@ -95,12 +118,13 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 5. 场景表 (剧情节点) ============
+    // ============ 6. 场景表 (剧情节点) ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS scenes (
         id INT AUTO_INCREMENT PRIMARY KEY,
         video_id INT NOT NULL,
         title VARCHAR(255) NOT NULL,
+        title_i18n TEXT DEFAULT NULL COMMENT '多语言标题 JSON',
         description TEXT,
         chapter VARCHAR(50) DEFAULT NULL COMMENT '章节名 (第1章/第2章...)',
         is_start TINYINT(1) DEFAULT 0 COMMENT '是否初始场景',
@@ -115,12 +139,13 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 6. 选择项表 ============
+    // ============ 7. 选择项表 ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS choices (
         id INT AUTO_INCREMENT PRIMARY KEY,
         scene_id INT NOT NULL,
         text VARCHAR(500) NOT NULL COMMENT '选项文本',
+        text_i18n TEXT DEFAULT NULL COMMENT '多语言选项文本 JSON',
         next_scene_id INT DEFAULT NULL COMMENT '跳转目标场景(NULL=停留)',
         sort_order INT DEFAULT 0,
         timer_seconds INT DEFAULT 0 COMMENT '此项单独倒计时,0=使用场景默认',
@@ -130,7 +155,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 7. 好感度规则表 (选择 -> 角色好感变化) ============
+    // ============ 8. 好感度规则表 (选择 -> 角色好感变化) ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS affection_rules (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -144,7 +169,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 8. 条件表 (解锁条件) ============
+    // ============ 9. 条件表 (解锁条件) ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS conditions (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -159,7 +184,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 9. 存档表 ============
+    // ============ 10. 存档表 ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS saves (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -177,7 +202,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 10. 存档好感度快照 ============
+    // ============ 11. 存档好感度快照 ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS save_affection (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -190,7 +215,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    // ============ 11. 结局收集表 (玩家解锁了哪些结局) ============
+    // ============ 12. 结局收集表 (玩家解锁了哪些结局) ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS player_endings (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -203,7 +228,77 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
-    console.log('[InitDB] 11 张数据表创建/确认完成');
+    // ============ 13. 积分字段 (users.points) ============
+    try {
+      const [pCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='users' AND COLUMN_NAME='points'", [dbName]);
+      if (pCols.length === 0) {
+        await conn.query("ALTER TABLE users ADD COLUMN points INT DEFAULT 0 COMMENT '积分余额' AFTER role");
+        console.log('[InitDB] 已为 users 表添加 points 字段');
+      }
+    } catch (e) { console.warn('[InitDB] 添加 points 字段失败 (可能已存在):', e.message); }
+
+    // ============ 13b. choices 表添加 point_cost 字段 ============
+    try {
+      const [cCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='choices' AND COLUMN_NAME='point_cost'", [dbName]);
+      if (cCols.length === 0) {
+        await conn.query("ALTER TABLE choices ADD COLUMN point_cost INT DEFAULT 0 COMMENT '选择消耗积分' AFTER timer_seconds");
+        console.log('[InitDB] 已为 choices 表添加 point_cost 字段');
+      }
+    } catch (e) { console.warn('[InitDB] 添加 point_cost 字段失败 (可能已存在):', e.message); }
+
+    // ============ 14. 充值记录表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS recharge_records (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        amount DECIMAL(10,2) NOT NULL COMMENT '充值金额',
+        points INT NOT NULL COMMENT '获得积分',
+        payment_method VARCHAR(50) DEFAULT 'manual' COMMENT '支付方式',
+        status ENUM('pending','completed','cancelled') DEFAULT 'completed',
+        operator_id INT DEFAULT NULL COMMENT '操作管理员',
+        remark VARCHAR(500) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB
+    `);
+
+    // ============ 15. 积分流水表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS points_log (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        points INT NOT NULL COMMENT '变动积分(正=获得,负=消费)',
+        type ENUM('recharge','choice','admin','refund') NOT NULL,
+        ref_id INT DEFAULT NULL COMMENT '关联ID(choice_id/recharge_id等)',
+        balance INT NOT NULL COMMENT '变动后余额',
+        remark VARCHAR(255) DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+
+    console.log('[InitDB] 15 张数据表(含积分体系)创建/确认完成');
+
+    // ============ 迁移: 为 videos 和 scenes 添加 game_id 字段 ============
+    try {
+      // videos 表添加 game_id
+      const [vCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='videos' AND COLUMN_NAME='game_id'", [dbName]);
+      if (vCols.length === 0) {
+        await conn.query('ALTER TABLE videos ADD COLUMN game_id INT DEFAULT NULL AFTER description');
+        await conn.query('ALTER TABLE videos ADD FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL');
+        console.log('[InitDB] 已为 videos 表添加 game_id 字段');
+      }
+      // scenes 表添加 game_id
+      const [sCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='scenes' AND COLUMN_NAME='game_id'", [dbName]);
+      if (sCols.length === 0) {
+        await conn.query('ALTER TABLE scenes ADD COLUMN game_id INT DEFAULT NULL AFTER description');
+        await conn.query('ALTER TABLE scenes ADD FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL');
+        console.log('[InitDB] 已为 scenes 表添加 game_id 字段');
+      }
+    } catch (e) {
+      console.warn('[InitDB] 迁移 game_id 字段失败 (可能已存在):', e.message);
+    }
 
     // 创建默认管理员
     const [existing] = await conn.query('SELECT id FROM users WHERE username = ?', [adminUser]);

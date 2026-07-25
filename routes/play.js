@@ -9,26 +9,70 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
+// 维护模式检查
+router.use(async (req, res, next) => {
+  try {
+    const [rows] = await pool.query("SELECT config_value FROM system_config WHERE config_key='maintenance_mode'");
+    if (rows[0]?.config_value === '1' && req.user?.role !== 'admin') {
+      return res.status(503).json({ error: '系统维护中，请稍后再试' });
+    }
+  } catch (e) { /* ignore */ }
+  next();
+});
+
+// 多语言翻译辅助
+function t(i18nJson, lang) {
+  if (!lang || lang === 'zh' || !i18nJson) return null;
+  try {
+    const dict = typeof i18nJson === 'string' ? JSON.parse(i18nJson) : i18nJson;
+    return dict[lang] || null;
+  } catch { return null; }
+}
+
 /**
  * GET /api/play/start
  * 开始新游戏 - 返回起始场景
+ * Query: ?game_id=N  指定游戏ID (多游戏时必填)
  */
 router.get('/start', async (req, res) => {
   try {
+    const gameId = req.query.game_id ? parseInt(req.query.game_id) : null;
+
+    // 构建查询条件
+    let whereClause = 'WHERE s.is_start = 1';
+    const params = [];
+    if (gameId) {
+      whereClause += ' AND s.game_id = ?';
+      params.push(gameId);
+    }
+
     const [rows] = await pool.query(`
-      SELECT s.*, v.file_path, v.duration, v.mime_type
+      SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status
       FROM scenes s
       JOIN videos v ON s.video_id = v.id
-      WHERE s.is_start = 1
+      ${whereClause}
       LIMIT 1
-    `);
+    `, params);
 
+    // 如果没有找到起始场景，且未指定 game_id，检查游戏数量
     if (rows.length === 0) {
+      const [games] = await pool.query('SELECT COUNT(*) AS cnt FROM games WHERE is_published = 1');
+      if (games[0].cnt > 1 && !gameId) {
+        return res.status(400).json({
+          error: '存在多个游戏，请指定 game_id 参数',
+          games_count: games[0].cnt
+        });
+      }
       return res.status(404).json({ error: '没有设置起始场景，请先在管理后台设置' });
     }
 
+    const lang = req.query.lang || '';
     const scene = rows[0];
-    scene.choices = await getSceneChoices(scene.id, {});
+    scene.choices = await getSceneChoices(scene.id, {}, lang);
+
+    // 翻译场景标题
+    const sceneTitleI18n = t(scene.title_i18n, lang);
+    if (sceneTitleI18n) scene.title = sceneTitleI18n;
 
     // choice_delay 未设置时默认取视频完整时长
     if ((!scene.choice_delay || scene.choice_delay === 0) && scene.choices.length > 0) {
@@ -41,13 +85,20 @@ router.get('/start', async (req, res) => {
     );
     scene.characters = characters.map(c => ({ ...c, affection: 0 }));
 
+    // 音轨 & 字幕
+    const [audios] = await pool.query('SELECT * FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    const [subtitles] = await pool.query('SELECT * FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    scene.audios = audios;
+    scene.subtitles = subtitles;
+
     // 移除旧的自动存档（slot 0 为自动存档）
     await pool.query('DELETE FROM saves WHERE user_id = ? AND slot = 0', [req.user.id]);
 
     res.json({
       scene,
       is_new_game: true,
-      message: '新游戏开始'
+      message: '新游戏开始',
+      transcode_warning: scene.transcode_status !== 'done' ? '该视频正在转码中，播放可能出现兼容性问题' : null
     });
   } catch (err) {
     console.error('[Play] 开始游戏失败:', err);
@@ -63,6 +114,7 @@ router.get('/start', async (req, res) => {
 router.get('/scene/:sceneId', async (req, res) => {
   try {
     const sceneId = parseInt(req.params.sceneId);
+    const lang = req.query.lang || '';
 
     // 解析当前好感度
     let currentAffections = {};
@@ -71,7 +123,7 @@ router.get('/scene/:sceneId', async (req, res) => {
     } catch (e) { /* ignore */ }
 
     const [rows] = await pool.query(`
-      SELECT s.*, v.file_path, v.duration, v.mime_type
+      SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status
       FROM scenes s
       JOIN videos v ON s.video_id = v.id
       WHERE s.id = ?
@@ -82,7 +134,11 @@ router.get('/scene/:sceneId', async (req, res) => {
     }
 
     const scene = rows[0];
-    scene.choices = await getSceneChoices(sceneId, currentAffections);
+    scene.choices = await getSceneChoices(sceneId, currentAffections, lang);
+
+    // 翻译场景标题
+    const sceneTitleI18n = t(scene.title_i18n, lang);
+    if (sceneTitleI18n) scene.title = sceneTitleI18n;
     
     // 音轨 & 字幕
     const [audios] = await pool.query('SELECT * FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
@@ -121,7 +177,7 @@ router.get('/scene/:sceneId', async (req, res) => {
       }
     }
 
-    res.json({ scene });
+    res.json({ scene, transcode_warning: scene.transcode_status !== 'done' ? '该视频正在转码中，播放可能出现兼容性问题' : null });
   } catch (err) {
     console.error('[Play] 获取场景失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
@@ -138,6 +194,8 @@ router.post('/choose', async (req, res) => {
     const { choice_id, scene_id, affections } = req.body;
     if (!choice_id) return res.status(400).json({ error: '请提供选择项ID' });
 
+    const userId = req.user.id;
+
     // 获取选择项信息
     const [choices] = await pool.query(
       'SELECT * FROM choices WHERE id = ? AND scene_id = ?',
@@ -146,6 +204,32 @@ router.post('/choose', async (req, res) => {
     if (choices.length === 0) return res.status(404).json({ error: '选择项无效' });
 
     const choice = choices[0];
+    const pointCost = choice.point_cost || 0;
+
+    // 积分检查与扣除
+    if (pointCost > 0) {
+      const [userRows] = await pool.query('SELECT points FROM users WHERE id = ?', [userId]);
+      if (userRows.length === 0) return res.status(404).json({ error: '用户不存在' });
+
+      const currentPoints = userRows[0].points;
+      if (currentPoints < pointCost) {
+        return res.status(402).json({
+          error: '积分不足',
+          required: pointCost,
+          current: currentPoints,
+          message: `需要 ${pointCost} 积分，当前余额 ${currentPoints} 积分`
+        });
+      }
+
+      const newBalance = currentPoints - pointCost;
+      await pool.query('UPDATE users SET points = ? WHERE id = ?', [newBalance, userId]);
+
+      await pool.query(
+        `INSERT INTO points_log (user_id, operator_id, points, type, ref_id, balance, remark)
+         VALUES (?, NULL, ?, 'choice', ?, ?, ?)`,
+        [userId, -pointCost, choice.id, newBalance, `选项消耗: ${choice.text}`]
+      );
+    }
 
     // 计算好感度变化
     const currentAffections = { ...(affections || {}) };
@@ -180,8 +264,16 @@ router.post('/choose', async (req, res) => {
       next_scene_id: choice.next_scene_id,
       affections: currentAffections,
       affection_changes: affectionChanges,
-      is_ending: !choice.next_scene_id // 没有下一场景=结束
+      is_ending: !choice.next_scene_id, // 没有下一场景=结束
+      point_cost: pointCost,
+      points_consumed: pointCost > 0
     };
+
+    // 如果消耗了积分，返回最新余额
+    if (pointCost > 0) {
+      const [pts] = await pool.query('SELECT points FROM users WHERE id = ?', [userId]);
+      response.points_balance = pts[0].points;
+    }
 
     res.json(response);
   } catch (err) {
@@ -193,7 +285,7 @@ router.post('/choose', async (req, res) => {
 /**
  * 获取场景的选择项（含条件过滤）
  */
-async function getSceneChoices(sceneId, affections) {
+async function getSceneChoices(sceneId, affections, lang = '') {
   const [allChoices] = await pool.query(`
     SELECT c.*, ns.title AS next_scene_title
     FROM choices c
@@ -229,7 +321,11 @@ async function getSceneChoices(sceneId, affections) {
     }
 
     if (isAvailable) {
-      // 附加好感度预览（但不显示具体数值，只显示会影响谁）
+      // 翻译选项文本
+      let text = choice.text;
+      const textI18n = t(choice.text_i18n, lang);
+      if (textI18n) text = textI18n;
+
       const [rules] = await pool.query(`
         SELECT ar.delta, c.name AS character_name
         FROM affection_rules ar
@@ -239,8 +335,9 @@ async function getSceneChoices(sceneId, affections) {
 
       validChoices.push({
         id: choice.id,
-        text: choice.text,
+        text,
         timer_seconds: choice.timer_seconds,
+        point_cost: choice.point_cost || 0,
         affection_hint: rules.map(r => ({
           character_name: r.character_name,
           direction: r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : 'none'

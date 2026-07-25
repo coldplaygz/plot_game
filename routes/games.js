@@ -1,0 +1,273 @@
+/**
+ * 游戏管理 API - 游戏分类系统
+ * 支持游戏 CRUD、封面图上传、按游戏过滤视频/场景
+ */
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const pool = require('../config/db');
+const { authenticate, authorize } = require('../middleware/auth');
+require('dotenv').config();
+
+const router = express.Router();
+
+// ============ Multer 配置 (封面图上传) ============
+const COVERS_DIR = process.env.COVERS_UPLOAD_DIR || 'uploads/covers';
+if (!fs.existsSync(COVERS_DIR)) fs.mkdirSync(COVERS_DIR, { recursive: true });
+
+const coverStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, COVERS_DIR),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'cover-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const coverUpload = multer({
+  storage: coverStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    if (allowed.includes(path.extname(file.originalname).toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(new Error('不支持的图片格式: ' + allowed.join(', ')));
+    }
+  }
+});
+
+// ============ 路由 ============
+
+// 多语言翻译辅助函数
+function translate(str) {
+  try { return str ? JSON.parse(str) : {}; } catch { return {}; }
+}
+function translateGame(game, lang) {
+  if (game.title_i18n) {
+    const t = translate(game.title_i18n);
+    if (t[lang]) game.title = t[lang];
+  }
+  if (game.description_i18n) {
+    const t = translate(game.description_i18n);
+    if (t[lang]) game.description = t[lang];
+  }
+}
+
+// 获取所有游戏列表（公开）
+router.get('/', async (req, res) => {
+  try {
+    const publishedOnly = req.query.published_only !== 'false';
+    const lang = req.query.lang || '';
+    let sql = `
+      SELECT g.*,
+        (SELECT COUNT(*) FROM videos v WHERE v.game_id = g.id) AS video_count,
+        (SELECT COUNT(*) FROM scenes s WHERE s.game_id = g.id) AS scene_count
+      FROM games g
+    `;
+    const params = [];
+    if (publishedOnly) {
+      sql += ' WHERE g.is_published = 1';
+    }
+    sql += ' ORDER BY g.sort_order ASC, g.created_at DESC';
+
+    const [rows] = await pool.query(sql, params);
+
+    // 多语言翻译
+    if (lang && lang !== 'zh') {
+      for (const game of rows) {
+        translateGame(game, lang);
+      }
+    }
+
+    res.json({ games: rows });
+  } catch (err) {
+    console.error('[Games] 获取列表失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 获取单个游戏详情（公开）
+router.get('/:id', async (req, res) => {
+  try {
+    const gameId = parseInt(req.params.id);
+
+    const [rows] = await pool.query(
+      `SELECT g.*,
+        (SELECT COUNT(*) FROM videos v WHERE v.game_id = g.id) AS video_count,
+        (SELECT COUNT(*) FROM scenes s WHERE s.game_id = g.id) AS scene_count
+       FROM games g WHERE g.id = ?`,
+      [gameId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: '游戏不存在' });
+    }
+
+    const game = rows[0];
+
+    // 获取关联的视频列表
+    const [videos] = await pool.query(
+      `SELECT v.*, u.username AS uploaded_by_name
+       FROM videos v
+       LEFT JOIN users u ON v.uploaded_by = u.id
+       WHERE v.game_id = ?
+       ORDER BY v.created_at DESC`,
+      [gameId]
+    );
+    game.videos = videos;
+
+    // 获取关联的场景列表
+    const [scenes] = await pool.query(
+      `SELECT s.*, v.title AS video_title, v.file_path, v.duration,
+        (SELECT COUNT(*) FROM choices c WHERE c.scene_id = s.id) AS choice_count
+       FROM scenes s
+       LEFT JOIN videos v ON s.video_id = v.id
+       WHERE s.game_id = ?
+       ORDER BY s.sort_order ASC`,
+      [gameId]
+    );
+    game.scenes = scenes;
+
+    res.json({ game });
+  } catch (err) {
+    console.error('[Games] 获取详情失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 创建游戏（管理员/编辑者）
+router.post('/', authenticate, authorize('admin', 'editor'), coverUpload.single('cover_image'), async (req, res) => {
+  try {
+    const { title, description, category, sort_order, is_published } = req.body;
+    if (!title) {
+      // 清理已上传的封面
+      if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: '游戏标题不能为空' });
+    }
+
+    let coverImage = null;
+    if (req.file) {
+      coverImage = req.file.path.replace(/\\/g, '/');
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO games (title, title_i18n, cover_image, description, description_i18n, category, sort_order, is_published)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [title, req.body.title_i18n || null, coverImage, description || '', req.body.description_i18n || null, category || null, parseInt(sort_order) || 0, is_published !== undefined ? (is_published ? 1 : 0) : 1]
+    );
+
+    res.status(201).json({
+      message: '游戏创建成功',
+      game: { id: result.insertId, title, cover_image: coverImage }
+    });
+  } catch (err) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    console.error('[Games] 创建失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 更新游戏（管理员/编辑者）
+router.put('/:id', authenticate, authorize('admin', 'editor'), coverUpload.single('cover_image'), async (req, res) => {
+  try {
+    const gameId = parseInt(req.params.id);
+    const [existing] = await pool.query('SELECT * FROM games WHERE id = ?', [gameId]);
+    if (existing.length === 0) {
+      if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: '游戏不存在' });
+    }
+
+    const oldGame = existing[0];
+    const { title, description, category, sort_order, is_published } = req.body;
+
+    const fields = [];
+    const values = [];
+
+    if (title !== undefined) { fields.push('title = ?'); values.push(title); }
+    if (description !== undefined) { fields.push('description = ?'); values.push(description); }
+    if (category !== undefined) { fields.push('category = ?'); values.push(category); }
+    if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(sort_order)); }
+    if (is_published !== undefined) { fields.push('is_published = ?'); values.push(is_published ? 1 : 0); }
+
+    // 处理封面图
+    if (req.file) {
+      const coverImage = req.file.path.replace(/\\/g, '/');
+      fields.push('cover_image = ?');
+      values.push(coverImage);
+      // 删除旧封面图
+      if (oldGame.cover_image) {
+        try { if (fs.existsSync(oldGame.cover_image)) fs.unlinkSync(oldGame.cover_image); }
+        catch (e) { console.warn('[Games] 删除旧封面失败:', e.message); }
+      }
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: '没有要更新的字段' });
+    }
+
+    values.push(gameId);
+    await pool.query(`UPDATE games SET ${fields.join(', ')} WHERE id = ?`, values);
+
+    res.json({ message: '游戏更新成功' });
+  } catch (err) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    console.error('[Games] 更新失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 删除游戏（仅管理员，级联删除关联的视频和场景）
+router.delete('/:id', authenticate, authorize('admin'), async (req, res) => {
+  try {
+    const gameId = parseInt(req.params.id);
+    const [existing] = await pool.query('SELECT * FROM games WHERE id = ?', [gameId]);
+    if (existing.length === 0) {
+      return res.status(404).json({ error: '游戏不存在' });
+    }
+
+    const game = existing[0];
+
+    // 获取该游戏所有视频（用于删除文件）
+    const [videos] = await pool.query('SELECT * FROM videos WHERE game_id = ?', [gameId]);
+
+    // 删除关联的场景
+    for (const video of videos) {
+      // 删除场景关联的 choices -> affection_rules -> conditions
+      const [scenes] = await pool.query('SELECT id FROM scenes WHERE video_id = ?', [video.id]);
+      for (const scene of scenes) {
+        await pool.query('DELETE FROM conditions WHERE target_type = "choice" AND target_id IN (SELECT id FROM choices WHERE scene_id = ?)', [scene.id]);
+        await pool.query('DELETE FROM affection_rules WHERE choice_id IN (SELECT id FROM choices WHERE scene_id = ?)', [scene.id]);
+        await pool.query('DELETE FROM choices WHERE scene_id = ?', [scene.id]);
+        await pool.query('DELETE FROM conditions WHERE target_type = "scene" AND target_id = ?', [scene.id]);
+      }
+      await pool.query('DELETE FROM scenes WHERE video_id = ?', [video.id]);
+    }
+
+    // 删除视频文件 + 数据库记录
+    for (const video of videos) {
+      try { if (fs.existsSync(video.file_path)) fs.unlinkSync(video.file_path); }
+      catch (e) { console.warn('[Games] 删除视频文件失败:', e.message); }
+    }
+    await pool.query('DELETE FROM videos WHERE game_id = ?', [gameId]);
+
+    // 删除直接关联的场景（game_id 直接关联）
+    await pool.query('DELETE FROM scenes WHERE game_id = ?', [gameId]);
+
+    // 删除封面图
+    if (game.cover_image) {
+      try { if (fs.existsSync(game.cover_image)) fs.unlinkSync(game.cover_image); }
+      catch (e) { console.warn('[Games] 删除封面失败:', e.message); }
+    }
+
+    // 删除游戏自身
+    await pool.query('DELETE FROM games WHERE id = ?', [gameId]);
+
+    res.json({ message: '游戏及关联数据已删除' });
+  } catch (err) {
+    console.error('[Games] 删除失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+module.exports = router;

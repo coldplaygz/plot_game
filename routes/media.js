@@ -5,6 +5,11 @@ const fs = require('fs');
 const pool = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
 
+// ffmpeg for WAV→MP3 conversion
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffmpeg = require('fluent-ffmpeg');
+ffmpeg.setFfmpegPath(ffmpegPath);
+
 const router = express.Router();
 const MEDIA_DIR = 'uploads/media';
 
@@ -56,16 +61,43 @@ router.post('/:videoId/audios', authorize('admin', 'editor'), upload.single('fil
       return res.status(400).json({ error: '语言和标签不能为空' });
     }
 
-    const filePath = req.file.path.replace(/\\/g, '/');
+    const filePath = req.file.path.replace(/\\\\/g, '/');
+    let finalPath = filePath;
+    let finalSize = req.file.size;
+
     if (is_default === '1') {
       await pool.query('UPDATE video_audios SET is_default = 0 WHERE video_id = ?', [req.params.videoId]);
     }
 
     const [result] = await pool.query(
       'INSERT INTO video_audios (video_id, language, label, file_path, file_size, is_default) VALUES (?,?,?,?,?,?)',
-      [req.params.videoId, language, label, filePath, req.file.size, is_default === '1' ? 1 : 0]
+      [req.params.videoId, language, label, finalPath, finalSize, is_default === '1' ? 1 : 0]
     );
-    res.status(201).json({ message: '音轨上传成功', audio: { id: result.insertId, language, label } });
+    const audioId = result.insertId;
+    res.status(201).json({ message: '音轨上传成功', audio: { id: audioId, language, label } });
+
+    // 后台异步 WAV → MP3 转换（不阻塞响应）
+    if (path.extname(req.file.originalname).toLowerCase() === '.wav') {
+      const mp3Path = filePath.replace(/\.wav$/i, '.mp3');
+      const convStart = Date.now();
+      ffmpeg(filePath)
+        .audioCodec('libmp3lame')
+        .audioBitrate('192k')
+        .output(mp3Path)
+        .on('end', () => {
+          try {
+            fs.unlinkSync(filePath);
+            const stats = fs.statSync(mp3Path);
+            pool.query('UPDATE video_audios SET file_path=?, file_size=? WHERE id=?', [mp3Path.replace(/\\\\/g, '/'), stats.size, audioId])
+              .catch(() => {});
+            console.log('[Media] WAV→MP3 完成 #' + audioId, ((Date.now() - convStart)/1000).toFixed(1) + 's');
+          } catch (e) { console.warn('[Media] 替换文件失败:', e.message); }
+        })
+        .on('error', (err) => {
+          console.warn('[Media] WAV→MP3 失败 #' + audioId + ':', err.message);
+        })
+        .run();
+    }
   } catch (err) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: '服务器内部错误' });
@@ -111,14 +143,30 @@ router.post('/:videoId/subtitles', authorize('admin', 'editor'), upload.single('
       return res.status(400).json({ error: '语言和标签不能为空' });
     }
 
-    const filePath = req.file.path.replace(/\\/g, '/');
+    const filePath = req.file.path.replace(/\\\\/g, '/');
+    let finalPath = filePath;
+
+    // SRT → VTT 自动转换（浏览器只支持 WebVTT）
+    if (path.extname(req.file.originalname).toLowerCase() === '.srt') {
+      const vttPath = filePath.replace(/\.srt$/i, '.vtt');
+      try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const vttContent = 'WEBVTT\n\n' + content.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2').replace(/(\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3})/g, '$1 line:80%');
+        fs.writeFileSync(vttPath, vttContent, 'utf8');
+        fs.unlinkSync(filePath);
+        finalPath = vttPath;
+      } catch (e) {
+        console.warn('[Media] SRT→VTT 转换失败，保留原始:', e.message);
+      }
+    }
+
     if (is_default === '1') {
       await pool.query('UPDATE video_subtitles SET is_default = 0 WHERE video_id = ?', [req.params.videoId]);
     }
 
     const [result] = await pool.query(
       'INSERT INTO video_subtitles (video_id, language, label, file_path, file_size, is_default) VALUES (?,?,?,?,?,?)',
-      [req.params.videoId, language, label, filePath, req.file.size, is_default === '1' ? 1 : 0]
+      [req.params.videoId, language, label, finalPath, req.file.size, is_default === '1' ? 1 : 0]
     );
     res.status(201).json({ message: '字幕上传成功', subtitle: { id: result.insertId, language, label } });
   } catch (err) {

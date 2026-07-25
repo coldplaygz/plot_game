@@ -30,6 +30,72 @@ function getVideoDuration(filePath) {
   });
 }
 
+// ─── 转码队列（串行，一次一个） ───
+const transcodeQueue = [];
+let isTranscodingNow = false;
+
+function enqueueTranscode(videoId, filePath) {
+  const transcodedPath = filePath.replace(/(\.[^.]+)$/, '_transcoded$1');
+  // 清理可能因上次崩溃残留的临时文件
+  try { if (fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath); } catch(e) {}
+  transcodeQueue.push({ videoId, filePath, transcodedPath });
+  console.log(`[Transcode] 入队 #${videoId}, 队列长度=${transcodeQueue.length}`);
+  processQueue();
+}
+
+// 启动时恢复中断的转码任务
+async function recoverPendingTranscodes() {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, file_path FROM videos WHERE transcode_status IN ('queued', 'transcoding')"
+    );
+    if (rows.length === 0) return;
+    console.log(`[Transcode] 恢复 ${rows.length} 个未完成的转码任务`);
+    for (const row of rows) {
+      if (fs.existsSync(row.file_path)) {
+        // 清理上次转码可能留下的 _transcoded 临时文件
+        const tmp = row.file_path.replace(/(\.[^.]+)$/, '_transcoded$1');
+        try { if (fs.existsSync(tmp)) fs.unlinkSync(tmp); } catch(e) {}
+        // 重新设为 queued 并入队
+        await pool.query('UPDATE videos SET transcode_status=? WHERE id=?', ['queued', row.id]);
+        enqueueTranscode(row.id, row.file_path);
+      } else {
+        console.warn(`[Transcode] 恢复失败: 文件不存在, 标记为失败 #${row.id}`);
+        await pool.query('UPDATE videos SET transcode_status=? WHERE id=?', ['failed', row.id]);
+      }
+    }
+  } catch (e) {
+    console.warn('[Transcode] 恢复检查失败:', e.message);
+  }
+}
+
+function processQueue() {
+  if (isTranscodingNow || transcodeQueue.length === 0) return;
+  isTranscodingNow = true;
+  const { videoId, filePath, transcodedPath } = transcodeQueue.shift();
+  console.log(`[Transcode] 开始处理 #${videoId}, 剩余=${transcodeQueue.length}`);
+
+  // 更新状态为「正在转码」
+  pool.query('UPDATE videos SET transcode_status=? WHERE id=?', ['transcoding', videoId]).catch(() => {});
+
+  transcodeVideo(filePath, transcodedPath).then(() => {
+    if (fs.existsSync(transcodedPath)) {
+      fs.unlinkSync(filePath);
+      fs.renameSync(transcodedPath, filePath);
+      const newStats = fs.statSync(filePath);
+      pool.query('UPDATE videos SET file_size=?, transcode_status=? WHERE id=?', [newStats.size, 'done', videoId]).catch(() => {});
+    }
+    console.log(`[Transcode] #${videoId} 完成`);
+    isTranscodingNow = false;
+    processQueue();
+  }).catch(e => {
+    console.warn(`[Transcode] #${videoId} 失败:`, e.message);
+    pool.query('UPDATE videos SET transcode_status=? WHERE id=?', ['failed', videoId]).catch(() => {});
+    isTranscodingNow = false;
+    processQueue();
+  });
+}
+
 const router = express.Router();
 const UPLOAD_DIR = process.env.UPLOAD_DIR || 'uploads/videos';
 
@@ -49,16 +115,27 @@ function fixFilename(name) {
 // 转码视频为 H.264 兼容格式
 function transcodeVideo(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
-    console.log('[FFmpeg] 开始转码:', inputPath);
-    const startTime = Date.now();
-    ffmpeg(inputPath)
-      .videoCodec('libx264')
-      .audioCodec('aac')
-      .outputOptions(['-profile:v baseline', '-level 3.0', '-pix_fmt yuv420p', '-preset fast', '-crf 23', '-movflags +faststart'])
-      .output(outputPath)
-      .on('end', () => { console.log('[FFmpeg] 转码完成 (', ((Date.now() - startTime) / 1000).toFixed(1), 's)'); resolve(); })
-      .on('error', (err) => { console.error('[FFmpeg] 失败:', err.message); reject(err); })
-      .run();
+    // 先检测编码，已是H.264则跳过
+    ffmpeg.ffprobe(inputPath, (err, meta) => {
+      if (!err && meta && meta.streams) {
+        const vStream = meta.streams.find(s => s.codec_type === 'video');
+        if (vStream && vStream.codec_name === 'h264') {
+          console.log('[FFmpeg] 已是H.264，跳过转码:', inputPath);
+          return resolve();
+        }
+      }
+
+      console.log('[FFmpeg] 开始转码:', inputPath);
+      const startTime = Date.now();
+      ffmpeg(inputPath)
+        .videoCodec('libx264')
+        .audioCodec('aac')
+        .outputOptions(['-profile:v main', '-pix_fmt yuv420p', '-preset fast', '-crf 23', '-movflags +faststart'])
+        .output(outputPath)
+        .on('end', () => { console.log('[FFmpeg] 转码完成 (', ((Date.now() - startTime) / 1000).toFixed(1), 's)'); resolve(); })
+        .on('error', (err) => { console.error('[FFmpeg] 失败:', err.message); reject(err); })
+        .run();
+    });
   });
 }
 
@@ -90,16 +167,29 @@ router.get('/', async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
-    const [countResult] = await pool.query('SELECT COUNT(*) AS total FROM videos');
+    const gameId = req.query.game_id ? parseInt(req.query.game_id) : null;
+
+    let whereClause = '';
+    const params = [];
+    if (gameId) {
+      whereClause = ' WHERE v.game_id = ?';
+      params.push(gameId);
+    }
+
+    const [countResult] = await pool.query('SELECT COUNT(*) AS total FROM videos v' + whereClause, params);
     const [rows] = await pool.query(
       `SELECT v.*, u.username AS uploaded_by_name,
-        (SELECT COUNT(*) FROM scenes s WHERE s.video_id = v.id) AS scene_count
+        (SELECT COUNT(*) FROM scenes s WHERE s.video_id = v.id) AS scene_count,
+        g.title AS game_title
        FROM videos v LEFT JOIN users u ON v.uploaded_by = u.id
+       LEFT JOIN games g ON v.game_id = g.id
+       ${whereClause}
        ORDER BY v.created_at DESC LIMIT ? OFFSET ?`,
-      [limit, offset]
+      [...params, limit, offset]
     );
     res.json({ videos: rows, pagination: { page, limit, total: countResult[0].total, totalPages: Math.ceil(countResult[0].total / limit) } });
   } catch (err) {
+    console.error('[Videos] 获取列表失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });
@@ -112,25 +202,122 @@ router.post('/', authorize('admin', 'editor'), upload.single('video'), async (re
     if (!title) { fs.unlinkSync(req.file.path); return res.status(400).json({ error: '视频标题不能为空' }); }
 
     let filePath = req.file.path.replace(/\\\\/g, '/');
-    const origPath = filePath;
-    const transcodedPath = filePath.replace(/(\\.[^.]+)$/, '_transcoded$1');
-    try {
-      await transcodeVideo(origPath, transcodedPath);
-      fs.unlinkSync(origPath);
-      fs.renameSync(transcodedPath, origPath);
-    } catch (e) { console.warn('[Videos] 转码失败，保留原始:', e.message); }
 
-    const stats = fs.statSync(origPath);
-    const duration = await getVideoDuration(origPath);
+    const stats = fs.statSync(filePath);
+    const duration = await getVideoDuration(filePath);
+    const gameId = req.body.game_id ? parseInt(req.body.game_id) : null;
     const [result] = await pool.query(
-      `INSERT INTO videos (title, description, filename, file_path, file_size, duration, mime_type, uploaded_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [title, req.body.description || '', fixFilename(req.file.originalname), filePath, stats.size, duration, req.file.mimetype || 'video/mp4', req.user.id]
+      `INSERT INTO videos (title, description, filename, file_path, file_size, duration, mime_type, transcode_status, uploaded_by, game_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+      [title, req.body.description || '', fixFilename(req.file.originalname), filePath, stats.size, duration, req.file.mimetype || 'video/mp4', req.user.id, gameId]
     );
-    res.status(201).json({ message: '视频上传成功', video: { id: result.insertId, title } });
+    const responseData = { message: '视频上传成功', video: { id: result.insertId, title }, warning: '视频正在后台转码为 H.264 兼容格式，转码完成前播放可能出现兼容性问题' };
+
+    // 自动创建场景
+    if (req.body.auto_create_scene === '1' && gameId) {
+      try {
+        const [sceneR] = await pool.query(
+          'INSERT INTO scenes (video_id, title, chapter, is_start, game_id) VALUES (?, ?, ?, ?, ?)',
+          [result.insertId, title, '', 0, gameId]
+        );
+        responseData.scene = { id: sceneR.insertId, title };
+      } catch (e) { console.warn('[Videos] 自动创建场景失败:', e.message); }
+    }
+
+    res.status(201).json(responseData);
+
+    // 加入转码队列（不阻塞响应）
+    enqueueTranscode(result.insertId, filePath);
+
   } catch (err) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: err.message || '上传失败' });
+  }
+});
+
+// 批量上传视频
+router.post('/batch', authorize('admin', 'editor'), upload.array('videos', 50), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: '请选择至少一个视频文件' });
+    }
+
+    const gameId = req.body.game_id ? parseInt(req.body.game_id) : null;
+    if (!gameId) {
+      // 清理已上传文件
+      req.files.forEach(f => { try { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); } catch(e) {} });
+      return res.status(400).json({ error: '请指定游戏ID (game_id)' });
+    }
+
+    // 验证游戏是否存在
+    const [gameRows] = await pool.query('SELECT id FROM games WHERE id = ?', [gameId]);
+    if (gameRows.length === 0) {
+      req.files.forEach(f => { try { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); } catch(e) {} });
+      return res.status(404).json({ error: '指定的游戏不存在' });
+    }
+
+    const autoCreateScenes = req.body.auto_create_scenes === 'true' || req.body.auto_create_scenes === true;
+
+    const videos = [];
+    const scenes = [];
+    const errors = [];
+
+    for (const file of req.files) {
+      try {
+        let filePath = file.path.replace(/\\/g, '/');
+        const origPath = filePath;
+        const transcodedPath = filePath.replace(/(\.[^.]+)$/, '_transcoded$1');
+        try {
+          await transcodeVideo(origPath, transcodedPath);
+          fs.unlinkSync(origPath);
+          fs.renameSync(transcodedPath, origPath);
+        } catch (e) { console.warn('[Videos] 批量转码失败，保留原始:', e.message); }
+
+        const stats = fs.statSync(origPath);
+        const duration = await getVideoDuration(origPath);
+
+        // 使用文件名(不含扩展名)作为标题
+        const title = path.parse(file.originalname).name;
+
+        const [result] = await pool.query(
+          `INSERT INTO videos (title, description, filename, file_path, file_size, duration, mime_type, uploaded_by, game_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [title, '', fixFilename(file.originalname), filePath, stats.size, duration, file.mimetype || 'video/mp4', req.user.id, gameId]
+        );
+
+        const videoRecord = { id: result.insertId, title, file_path: filePath };
+        videos.push(videoRecord);
+
+        // 如果开启自动创建场景
+        if (autoCreateScenes) {
+          const [sceneResult] = await pool.query(
+            `INSERT INTO scenes (video_id, title, description, game_id, sort_order)
+             VALUES (?, ?, ?, ?, ?)`,
+            [result.insertId, title, '', gameId, 0]
+          );
+          scenes.push({ id: sceneResult.insertId, video_id: result.insertId, title, game_id: gameId });
+        }
+      } catch (fileErr) {
+        console.error('[Videos] 批量上传文件失败:', file.originalname, fileErr.message);
+        errors.push({ filename: file.originalname, error: fileErr.message });
+        // 清理失败的文件
+        try { if (fs.existsSync(file.path)) fs.unlinkSync(file.path); } catch(e) {}
+      }
+    }
+
+    res.status(201).json({
+      message: `批量上传完成: ${videos.length} 个视频, ${scenes.length} 个场景, ${errors.length} 个失败`,
+      videos,
+      scenes,
+      errors
+    });
+  } catch (err) {
+    // 清理所有已上传文件
+    if (req.files) {
+      req.files.forEach(f => { try { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); } catch(e) {} });
+    }
+    console.error('[Videos] 批量上传失败:', err);
+    res.status(500).json({ error: err.message || '批量上传失败' });
   }
 });
 
@@ -165,36 +352,24 @@ router.put('/:id/replace', authorize('admin', 'editor'), upload.single('video'),
     try { if (fs.existsSync(oldVideo.file_path)) fs.unlinkSync(oldVideo.file_path); }
     catch (e) { console.warn('[Videos] 删除旧文件失败:', e.message); }
 
-    // 新文件路径处理 + 转码
-    let filePath = req.file.path.replace(/\\/g, '/');
-    const origPath = filePath;
-    const transcodedPath = filePath.replace(/(\.[^.]+)$/, '_transcoded$1');
-    try {
-      await transcodeVideo(origPath, transcodedPath);
-      fs.unlinkSync(origPath);
-      fs.renameSync(transcodedPath, origPath);
-    } catch (e) { console.warn('[Videos] 转码失败，保留原始:', e.message); }
+    // 新文件路径
+    let filePath = req.file.path.replace(/\\\\/g, '/');
 
-    const stats = fs.statSync(origPath);
-    const duration = await getVideoDuration(origPath);
+    const stats = fs.statSync(filePath);
+    const duration = await getVideoDuration(filePath);
 
     // 更新数据库
     const safeFilename = fixFilename(req.file.originalname);
     await pool.query(
-      `UPDATE videos SET filename = ?, file_path = ?, file_size = ?, duration = ?, mime_type = ? WHERE id = ?`,
+      `UPDATE videos SET filename = ?, file_path = ?, file_size = ?, duration = ?, mime_type = ?, transcode_status = 'queued' WHERE id = ?`,
       [safeFilename, filePath, stats.size, duration, req.file.mimetype || 'video/mp4', videoId]
     );
 
-    res.json({
-      message: '视频已替换',
-      video: {
-        id: videoId,
-        title: oldVideo.title,
-        filename: safeFilename,
-        file_path: filePath,
-        file_size: stats.size
-      }
-    });
+    res.json({ message: '视频已替换', video: { id: videoId, title: safeFilename }, warning: '新视频正在后台转码为 H.264 兼容格式，转码完成前播放可能出现兼容性问题' });
+
+    // 加入转码队列（不阻塞响应）
+    enqueueTranscode(videoId, filePath);
+
   } catch (err) {
     console.error('[Videos] 替换视频失败:', err);
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -203,3 +378,6 @@ router.put('/:id/replace', authorize('admin', 'editor'), upload.single('video'),
 });
 
 module.exports = router;
+
+// 启动时自动恢复未完成的转码任务
+recoverPendingTranscodes();

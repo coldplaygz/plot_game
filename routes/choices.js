@@ -41,12 +41,12 @@ router.get('/scene/:sceneId', async (req, res) => {
 // 创建选择项
 router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { scene_id, text, next_scene_id, sort_order, timer_seconds } = req.body;
+    const { scene_id, text, next_scene_id, sort_order, timer_seconds, point_cost } = req.body;
     if (!scene_id || !text) return res.status(400).json({ error: '场景ID和选项文本不能为空' });
 
     const [result] = await pool.query(
-      'INSERT INTO choices (scene_id, text, next_scene_id, sort_order, timer_seconds) VALUES (?, ?, ?, ?, ?)',
-      [scene_id, text, next_scene_id || null, sort_order || 0, timer_seconds || 0]
+      'INSERT INTO choices (scene_id, text, next_scene_id, sort_order, timer_seconds, point_cost) VALUES (?, ?, ?, ?, ?, ?)',
+      [scene_id, text, next_scene_id || null, sort_order || 0, timer_seconds || 0, point_cost || 0]
     );
     res.status(201).json({ message: '选择项创建成功', choice: { id: result.insertId, text } });
   } catch (err) {
@@ -58,12 +58,13 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
 // 更新选择项
 router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { text, next_scene_id, sort_order, timer_seconds } = req.body;
+    const { text, next_scene_id, sort_order, timer_seconds, point_cost } = req.body;
     const fields = []; const values = [];
     if (text !== undefined) { fields.push('text = ?'); values.push(text); }
     if (next_scene_id !== undefined) { fields.push('next_scene_id = ?'); values.push(next_scene_id); }
     if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(sort_order)); }
     if (timer_seconds !== undefined) { fields.push('timer_seconds = ?'); values.push(parseInt(timer_seconds)); }
+    if (point_cost !== undefined) { fields.push('point_cost = ?'); values.push(parseInt(point_cost)); }
     if (fields.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
     values.push(req.params.id);
     await pool.query(`UPDATE choices SET ${fields.join(', ')} WHERE id = ?`, values);

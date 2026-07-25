@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "init-db": "node config/init-db.js"
+    "init-db": "node config/init-db.js",
+    "build": "cd client && npm run build",
+    "client-dev": "cd client && npm run dev"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

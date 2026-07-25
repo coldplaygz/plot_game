@@ -10,3 +10,7 @@ deploy-init.js
 .env
 alxg1.pem
 *.pem
+
+# Vue 构建产物
+client/dist/
+client/node_modules/

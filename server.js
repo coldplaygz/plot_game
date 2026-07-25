@@ -1,16 +1,22 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
 const characterRoutes = require('./routes/characters');
 const sceneRoutes = require('./routes/scenes');
 const choiceRoutes = require('./routes/choices');
-const endingRoutes = require('./routes/endings');
+const endingRoutes = require('./routes/endings');  // 已移除结局模块
 const videoRoutes = require('./routes/videos');
 const saveRoutes = require('./routes/saves');
 const playRoutes = require('./routes/play');
 const mediaRoutes = require('./routes/media');
+const gameRoutes = require('./routes/games');
+const configRoutes = require('./routes/config');
+const userRoutes = require('./routes/users');
+const rechargeRoutes = require('./routes/recharge');
+const pointsRoutes = require('./routes/points');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,9 +25,8 @@ const PORT = process.env.PORT || 3000;
 // 强制所有请求体按 UTF-8 解析
 app.use(express.json({ type: 'application/json' }));
 app.use(express.urlencoded({ extended: true, type: 'application/x-www-form-urlencoded' }));
-// 强制所有响应头为 UTF-8
+// 全局 UTF-8（不覆盖静态文件的 Content-Type）
 app.use((req, res, next) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   next();
 });
@@ -51,7 +56,22 @@ app.use('/uploads', express.static('uploads', {
     }
   }
 }));
-app.use(express.static('public'));
+
+// Vue 前端 SPA (生产构建产物)
+// 缓存策略：hash 资源长期缓存，index.html 不缓存
+app.use('/assets', express.static(path.join(__dirname, 'client/dist/assets'), { maxAge: '365d', immutable: true }));
+app.use(express.static(path.join(__dirname, 'client/dist'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }
+}));
+// SPA fallback — 所有非 /api 非 /uploads 的路径返回 Vue index.html
+app.get(/^(?!\/(api|uploads))/, (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, 'client/dist/index.html'));
+});
 
 // 健康检查
 app.get('/api/health', (req, res) => {
@@ -60,14 +80,19 @@ app.get('/api/health', (req, res) => {
 
 // API 路由
 app.use('/api/auth', authRoutes);
-app.use('/api/characters', characterRoutes);
+// app.use('/api/characters', characterRoutes);  // 已移除角色模块
 app.use('/api/scenes', sceneRoutes);
 app.use('/api/choices', choiceRoutes);
-app.use('/api/endings', endingRoutes);
+// app.use('/api/endings', endingRoutes);  // 已移除结局模块
 app.use('/api/videos', videoRoutes);
 app.use('/api/saves', saveRoutes);
 app.use('/api/play', playRoutes);
 app.use('/api/media', mediaRoutes);  // 音轨/字幕
+app.use('/api/games', gameRoutes);   // 游戏分类
+app.use('/api/config', configRoutes); // 系统配置
+app.use('/api/users', userRoutes);    // 用户管理
+app.use('/api/recharge', rechargeRoutes); // 充值管理
+app.use('/api/points', pointsRoutes);  // 积分
 
 // 404
 app.use((req, res) => res.status(404).json({ error: '接口不存在' }));
@@ -86,10 +111,10 @@ const HOST = '0.0.0.0';
 
 app.listen(PORT, HOST, () => {
   console.log('='.repeat(50));
-  console.log('  互动影像游戏 - 后台服务');
+  console.log('  长城AI互动短剧平台 - 后台服务');
   console.log('  端口: ' + PORT + '  绑定: ' + HOST);
   console.log('  本机: http://localhost:' + PORT);
-  console.log('  管理后台: http://localhost:' + PORT + '/admin.html');
+  console.log('  管理后台: http://localhost:' + PORT + '/admin');
   console.log('  游戏入口: http://localhost:' + PORT);
   console.log('='.repeat(50));
 });
