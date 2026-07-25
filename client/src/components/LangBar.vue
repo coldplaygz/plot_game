@@ -106,10 +106,10 @@ function applyAudio(audio) {
   props.videoEl.muted = true
   emit('update:audioEl', a)
   const syncAudio = () => { a.currentTime = props.videoEl.currentTime }
-  props.videoEl.onplay = () => { props.videoEl.muted = true; syncAudio(); a.play().catch(() => { props.videoEl.muted = false }) }
+  props.videoEl.onplay = () => { props.videoEl.muted = true; props.videoEl.volume = 1; syncAudio(); a.play().catch(() => { props.videoEl.muted = false }) }
   props.videoEl.onpause = () => a.pause()
   props.videoEl.onseeked = syncAudio
-  if (!props.videoEl.paused) { props.videoEl.muted = true; syncAudio(); a.play().catch(() => { props.videoEl.muted = false }) }
+  if (!props.videoEl.paused) { props.videoEl.muted = true; props.videoEl.volume = 1; syncAudio(); a.play().catch(() => { props.videoEl.muted = false }) }
   altAudio = a
 }
 
@@ -135,8 +135,10 @@ async function applyAudioMobile(audio) {
     }
 
     props.videoEl.muted = true
+    props.videoEl.volume = 1
     props.videoEl.onplay = () => {
       props.videoEl.muted = true
+      props.videoEl.volume = 1
       if (audioCtx?.state === 'suspended') audioCtx.resume()
       playFrom(props.videoEl.currentTime)
     }

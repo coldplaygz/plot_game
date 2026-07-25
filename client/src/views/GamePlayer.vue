@@ -352,11 +352,13 @@ function playScene() {
 
   v.currentTime = 0
   v.src = scene.file_path ? '/' + scene.file_path.replace(/\\\\/g, '/') : ''
-  // 外挂音轨激活时，通过 attribute 静音（load() 重置 property 但保留 attribute）
+  // 外挂音轨激活时双重静音（attribute + volume，load 不重置 volume）
   if (game.currentAudioEl) {
     v.setAttribute('muted', '')
+    v.volume = 0
   } else {
     v.removeAttribute('muted')
+    v.volume = 1
   }
   v.load()
   v.play().catch(() => {})
