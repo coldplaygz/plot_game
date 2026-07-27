@@ -169,22 +169,6 @@ tailwind.config = {
 }
 .choice-btn .hint { @apply text-[11px] text-text-dim mt-[6px] flex gap-[6px] justify-center; }
 
-/* 好感度面板 */
-.aff-panel { @apply absolute right-4 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-[5] opacity-0; transition: opacity .5s; }
-.aff-panel.show { @apply opacity-100; }
-.aff-item { @apply flex items-center gap-[6px] bg-black/60 py-[6px] px-[10px] rounded-[20px] border border-white/[0.08]; }
-.aff-dot { @apply w-2 h-2 rounded-full; }
-.aff-name { @apply text-[11px] text-text-muted w-10 text-right; }
-.aff-bar-wrap { @apply w-20 h-1 bg-white/10 rounded-sm overflow-hidden; }
-.aff-bar { @apply h-full rounded-sm; transition: width .5s ease; width: var(--w, 50%); }
-.aff-val { @apply text-[10px] text-text-dimmer w-6; }
-
-/* 好感度变化动画 */
-.aff-change { @apply fixed text-[20px] font-bold pointer-events-none z-[20]; animation: affFloat 1.5s ease-out forwards; }
-@keyframes affFloat { 0% { opacity:1; transform:translateY(0); } 100% { opacity:0; transform:translateY(-60px); } }
-.aff-change.up { @apply text-brand-pink2; text-shadow: 0 0 10px rgba(236,72,153,0.5); }
-.aff-change.down { @apply text-brand-cyan; text-shadow: 0 0 10px rgba(6,182,212,0.5); }
-
 /* 场景标题 */
 .scene-title { @apply absolute top-5 left-6 z-[5] text-[14px] text-white/50; text-shadow: 0 2px 10px rgba(0,0,0,0.8); }
 
@@ -207,18 +191,23 @@ tailwind.config = {
 
 /* ===== 存档页面 ===== */
 #saveLoadPage { @apply flex-col items-center justify-center bg-black/[0.92] z-[30]; }
-.save-panel { @apply bg-surface-login/95 border border-border-accent rounded-[20px] p-8 w-[560px] max-w-[90vw]; }
+.save-panel { @apply bg-surface-login/95 border border-border-accent rounded-[20px] p-8 w-[600px] max-w-[90vw]; }
 .save-panel h2 { @apply text-center mb-5 text-[22px]; }
 .save-slots { @apply grid grid-cols-3 gap-3 mb-5; }
 .save-slot {
-  @apply bg-black/40 border border-border-dim rounded-[12px] p-4 cursor-pointer text-center min-h-[100px] flex flex-col justify-center;
+  @apply bg-black/40 border border-border-dim rounded-[12px] p-4 cursor-pointer text-center min-h-[110px] flex flex-col justify-center relative;
   transition: all .2s;
 }
 .save-slot:hover { @apply border-brand-purple; }
 .save-slot .slot-num { @apply text-[11px] text-text-dimmer; }
 .save-slot .slot-title { @apply text-[13px] text-text-subtle mt-1; }
-.save-slot .slot-time { @apply text-[10px] text-text-dimmest; }
+.save-slot .slot-info { @apply text-[10px] text-text-dimmest mt-[2px]; }
 .save-slot.empty { @apply text-[#444] text-[13px]; }
+.save-slot .slot-del {
+  @apply absolute top-1 right-2 text-text-dimmest text-[14px] cursor-pointer opacity-0 transition-opacity;
+}
+.save-slot:hover .slot-del { @apply opacity-100; }
+.save-slot .slot-del:hover { @apply text-red-500; }
 .save-panel .actions { @apply flex gap-[10px] justify-center; }
 
 /* ===== 通用按钮 ===== */
@@ -241,19 +230,6 @@ tailwind.config = {
 .ending-card .type.good { @apply text-brand-purple; }
 .ending-card .type.normal { @apply text-text-dim; }
 .ending-card .type.bad { @apply text-text-dimmer; }
-
-/* ===== 图鉴 ===== */
-#galleryPage { @apply flex-col items-center bg-black/[0.92] overflow-y-auto py-10 px-5 z-[20]; }
-.gallery-grid { @apply grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4 max-w-[900px] w-full; }
-.gallery-item {
-  @apply bg-surface-login/80 border border-border-dim rounded-[14px] p-5 text-center;
-  transition: all .2s;
-}
-.gallery-item.unlocked { @apply border-brand-purple; }
-.gallery-item.locked { @apply opacity-30; }
-.gallery-item h4 { @apply text-[15px] mb-1; }
-.gallery-item .gtype { @apply text-[11px] text-text-dim; }
-.gallery-back { @apply fixed top-5 left-6 text-text-dim cursor-pointer text-[14px] z-[21]; }
 
 /* ===== Toast ===== */
 .toast {
@@ -290,8 +266,7 @@ tailwind.config = {
     <div class="ver">Heartbeat Moments v1.0</div>
     <div class="menu-btns">
       <button class="menu-btn" onclick="startNewGame()"><span class="icon">▶</span> 开始新游戏</button>
-      <button class="menu-btn" onclick="showSaveLoad('load')"><span class="icon">📂</span> 继续游戏</button>
-      <button class="menu-btn" onclick="showGallery()"><span class="icon">🏆</span> 结局图鉴</button>
+      <button class="menu-btn" onclick="continueGame()"><span class="icon">📂</span> 继续游戏</button>
       <button class="menu-btn" onclick="logout()"><span class="icon">🚪</span> 退出登录</button>
     </div>
   </div>
@@ -302,7 +277,7 @@ tailwind.config = {
   <video id="gameVideo" playsinline preload="auto"></video>
   <div class="scene-title" id="sceneTitle"></div>
   <div class="pause-menu">
-    <button class="pause-btn" onclick="togglePause()">⏸</button>
+    <button class="pause-btn" onclick="togglePause()">☰</button>
     <div class="pause-dropdown" id="pauseDropdown">
       <button onclick="showSaveLoad('save')">💾 存档</button>
       <button onclick="showSaveLoad('load')">📂 读档</button>
@@ -316,7 +291,6 @@ tailwind.config = {
     </div>
     <div class="choices" id="choicesContainer"></div>
   </div>
-  <div class="aff-panel" id="affPanel"></div>
   <button class="skip-btn" id="skipBtn" onclick="skipToChoices()">跳过 ⏭</button>
   <div class="lang-bar" id="langBar">
     <select id="audioSelect" onchange="switchAudio()" class="hidden"></select>
@@ -333,13 +307,6 @@ tailwind.config = {
 <!-- ==================== 结局页 ==================== -->
 <div id="endingPage" class="page"></div>
 
-<!-- ==================== 图鉴页 ==================== -->
-<div id="galleryPage" class="page">
-  <div class="gallery-back" onclick="returnToLobby()">← 返回大厅</div>
-  <h2 class="mb-6">结局图鉴</h2>
-  <div class="gallery-grid" id="galleryGrid"></div>
-</div>
-
 <script>
 // ========== 全局状态 ==========
 const API = '';
@@ -348,11 +315,11 @@ let user = null;
 let gameState = {
   currentScene: null,
   currentVideo: null,
-  affections: {},
-  characters: [],
   choiceTimer: null,
   timerInterval: null,
-  isEnding: false
+  isEnding: false,
+  playSeconds: 0,
+  _playTimer: null
 };
 
 // ========== 工具函数 ==========
@@ -367,13 +334,20 @@ function toast(msg) {
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2500);
 }
+function formatPlayTime(seconds) {
+  if (!seconds || seconds <= 0) return '0分钟';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return h + '小时' + m + '分钟';
+  if (m > 0) return m + '分钟';
+  return seconds + '秒';
+}
 
 // ========== 页面切换 ==========
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => { p.classList.remove('active', 'flex'); p.classList.add('hidden'); });
   const page = document.getElementById(id);
   if (page) { page.classList.add('active', 'flex'); page.classList.remove('hidden'); }
-  // 暂停视频
   const v = document.getElementById('gameVideo');
   if (id !== 'gamePage' && v) v.pause();
 }
@@ -425,56 +399,69 @@ async function doRegister() {
 }
 
 function logout() {
-  token = null; user = null; gameState = {};
+  stopPlayTimer();
+  token = null; user = null;
+  gameState = { currentScene: null, currentVideo: null, choiceTimer: null, timerInterval: null, isEnding: false, playSeconds: 0, _playTimer: null };
   localStorage.removeItem('plot_game_token');
   showPage('loginPage');
   document.getElementById('loginErr').textContent = '';
   const v = document.getElementById('gameVideo'); v.pause(); v.src = '';
 }
 
+// ========== 游戏时长追踪 ==========
+function startPlayTimer() {
+  stopPlayTimer();
+  gameState._playTimer = setInterval(() => { gameState.playSeconds++; }, 1000);
+}
+function stopPlayTimer() {
+  if (gameState._playTimer) { clearInterval(gameState._playTimer); gameState._playTimer = null; }
+}
+
 // ========== 新游戏 ==========
 async function startNewGame() {
   const res = await api('/api/play/start');
   if (res.error) return toast(res.error);
-  gameState.affections = {};
+  gameState.playSeconds = 0;
   loadScene(res.scene);
 }
 
+// ========== 继续游戏 ==========
+async function continueGame() {
+  const res = await api('/api/saves/auto');
+  if (res.save && res.save.scene_id) {
+    doLoad(res.save.id);
+  } else {
+    showSaveLoad('load', 'lobby');
+  }
+}
+
+// ========== 场景加载 ==========
 async function loadScene(scene) {
-  // 清除上一个场景的定时器
   if (gameState._choiceDelayId) { clearTimeout(gameState._choiceDelayId); gameState._choiceDelayId = null; }
   hideChoices();
   clearInterval(gameState.timerInterval);
 
   gameState.currentScene = scene;
   gameState.isEnding = scene.is_ending && scene.ending;
-  if (scene.characters) gameState.characters = scene.characters;
 
   showPage('gamePage');
   document.getElementById('sceneTitle').textContent = scene.chapter ? scene.chapter + ' - ' + scene.title : scene.title;
 
-  // 播放视频
   const v = document.getElementById('gameVideo');
   v.currentTime = 0;
   v.src = '/' + (scene.file_path || '').replace(/\\/g, '/');
   v.load();
   v.play().catch(() => {});
 
-  // 好感度面板
-  renderAffectionPanel();
-
-  // 语言/音轨/字幕
   initLanguageBar(scene);
+  startPlayTimer();
 
-  // 根据 choice_delay 决定何时弹出选项
-  const delay = scene.choice_delay || 0; // 秒
+  const delay = scene.choice_delay || 0;
   const hasChoices = scene.choices && scene.choices.length > 0;
 
   if (hasChoices) {
     if (delay > 0) {
-      // 显示跳过按钮
       document.getElementById('skipBtn').classList.add('show');
-      // 延迟弹出：视频播到第N秒时暂停并显示选项
       gameState._choiceDelayId = setTimeout(() => {
         document.getElementById('skipBtn').classList.remove('show');
         v.pause();
@@ -482,7 +469,6 @@ async function loadScene(scene) {
       }, delay * 1000);
     } else {
       document.getElementById('skipBtn').classList.remove('show');
-      // 等视频播完再显示选项
       v.onended = () => {
         if (!gameState.isEnding) {
           renderChoices(scene.choices, (scene.choice_timer == null || scene.choice_timer === 0) ? 0 : (scene.choice_timer || 10));
@@ -492,12 +478,31 @@ async function loadScene(scene) {
   } else {
     hideChoices();
     document.getElementById('skipBtn').classList.remove('show');
+    if (!gameState.isEnding) {
+      v.onended = () => showCompleteDialog();
+    }
   }
 
-  // 结局处理
   if (gameState.isEnding) {
     setTimeout(() => showEnding(scene.ending), 2000);
   }
+
+  autoSave();
+}
+
+// ========== 自动存档 ==========
+async function autoSave() {
+  if (!gameState.currentScene) return;
+  await api('/api/saves', {
+    method: 'POST',
+    body: JSON.stringify({
+      slot: 0,
+      scene_id: gameState.currentScene.id,
+      game_id: gameState.currentScene.game_id || null,
+      title: gameState.currentScene.title,
+      play_time: gameState.playSeconds
+    })
+  });
 }
 
 // ========== 选择系统 ==========
@@ -535,16 +540,6 @@ function renderChoices(choices, defaultTimer) {
     const btn = document.createElement('button');
     btn.className = 'choice-btn';
     btn.textContent = c.text;
-    if (c.affection_hint && c.affection_hint.length > 0) {
-      const hint = document.createElement('div');
-      hint.className = 'hint';
-      c.affection_hint.forEach(h => {
-        const dot = document.createElement('span');
-        dot.textContent = h.direction === 'up' ? '❤️' : h.direction === 'down' ? '💔' : '';
-        hint.appendChild(dot);
-      });
-      btn.appendChild(hint);
-    }
     btn.onclick = () => makeChoice(c.id);
     container.appendChild(btn);
   });
@@ -567,7 +562,6 @@ function startChoiceTimer(seconds) {
     document.getElementById('timerText').textContent = Math.ceil(remaining) + 's';
     if (remaining <= 0) {
       clearInterval(gameState.timerInterval);
-      // 自动选第一个
       const firstBtn = document.querySelector('.choice-btn');
       if (firstBtn) firstBtn.click();
     }
@@ -581,38 +575,17 @@ async function makeChoice(choiceId) {
 
   const res = await api('/api/play/choose', {
     method: 'POST',
-    body: JSON.stringify({ choice_id: choiceId, scene_id: gameState.currentScene.id, affections: gameState.affections })
+    body: JSON.stringify({ choice_id: choiceId, scene_id: gameState.currentScene.id })
   });
   if (res.error) return toast(res.error);
 
-  // 好感度变化动画
-  gameState.affections = res.affections || {};
-  if (res.affection_changes) {
-    res.affection_changes.forEach(ch => {
-      showAffectionChange(ch);
-    });
-  }
-
-  // 跳转到下一场景
   if (res.next_scene_id) {
-    const sceneRes = await api('/api/play/scene/' + res.next_scene_id + '?affections=' + encodeURIComponent(JSON.stringify(gameState.affections)));
+    const sceneRes = await api('/api/play/scene/' + res.next_scene_id);
     if (sceneRes.scene) loadScene(sceneRes.scene);
     else toast('场景加载失败');
   } else {
-    // 没有下一场景 = 结局
-    toast('故事完结');
-    setTimeout(() => returnToLobby(), 3000);
+    showCompleteDialog();
   }
-}
-
-function showAffectionChange(change) {
-  const el = document.createElement('div');
-  el.className = 'aff-change ' + (change.delta > 0 ? 'up' : 'down');
-  el.textContent = (change.delta > 0 ? '+' : '') + change.delta + ' ' + change.character_name;
-  el.style.left = (40 + Math.random() * 40) + '%';
-  el.style.top = (30 + Math.random() * 20) + '%';
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 1600);
 }
 
 // ========== 语言/音轨/字幕 ==========
@@ -708,27 +681,6 @@ function switchSubtitle() {
   }
 }
 
-function renderAffectionPanel() {
-  const panel = document.getElementById('affPanel');
-  panel.innerHTML = '';
-  if (!gameState.characters) return;
-
-  gameState.characters.forEach(c => {
-    const val = gameState.affections[c.id] || 0;
-    const pct = Math.min(100, Math.max(0, 50 + val * 0.5));
-    const item = document.createElement('div');
-    item.className = 'aff-item';
-    item.innerHTML = `
-      <div class="aff-dot" style="background:${c.color}"></div>
-      <span class="aff-name">${c.name}</span>
-      <div class="aff-bar-wrap"><div class="aff-bar" style="--w:${pct}%;background:${c.color}"></div></div>
-      <span class="aff-val">${val > 0 ? '+' + val : val}</span>
-    `;
-    panel.appendChild(item);
-  });
-  panel.classList.add('show');
-}
-
 // ========== 暂停菜单 ==========
 function togglePause() {
   document.getElementById('pauseDropdown').classList.toggle('show');
@@ -736,10 +688,13 @@ function togglePause() {
 
 // ========== 存档/读档 ==========
 let saveMode = 'save';
-let saveCallback = null;
+let saveFrom = 'game';
 
-async function showSaveLoad(mode) {
+async function showSaveLoad(mode, from) {
   saveMode = mode;
+  saveFrom = from || 'game';
+  document.getElementById('pauseDropdown').classList.remove('show');
+
   const panel = document.getElementById('savePanel');
   const res = await api('/api/saves');
   const saves = res.saves || [];
@@ -747,14 +702,30 @@ async function showSaveLoad(mode) {
   let html = '<h2>' + (mode === 'save' ? '💾 保存游戏' : '📂 读取存档') + '</h2><div class="save-slots">';
   for (let i = 1; i <= 9; i++) {
     const s = saves.find(sv => sv.slot === i);
-    html += `<div class="save-slot ${s ? '' : 'empty'}" data-slot="${i}" onclick="${mode === 'save' ? 'doSave('+i+')' : (s ? 'doLoad('+s.id+')' : '')}">
-      <div class="slot-num">存档位 ${i}</div>
-      ${s ? `<div class="slot-title">${s.title}</div><div class="slot-time">${s.scene_title||''} · ${new Date(s.updated_at).toLocaleString()}</div>` : '<span>空</span>'}
-    </div>`;
+    if (s) {
+      const timeStr = formatPlayTime(s.play_time);
+      const dateStr = new Date(s.updated_at).toLocaleString('zh-CN', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+      html += `<div class="save-slot" onclick="${mode === 'save' ? 'doSave('+i+')' : 'doLoad('+s.id+')'}">
+        <span class="slot-del" onclick="event.stopPropagation();deleteSave(${s.id})" title="删除">×</span>
+        <div class="slot-num">存档位 ${i}</div>
+        <div class="slot-title">${s.chapter ? s.chapter + ' · ' : ''}${s.title || s.scene_title || ''}</div>
+        <div class="slot-info">${timeStr} · ${dateStr}</div>
+      </div>`;
+    } else {
+      html += `<div class="save-slot ${mode === 'save' ? '' : 'empty'}" ${mode === 'save' ? 'onclick="doSave('+i+')"' : ''}>
+        <div class="slot-num">存档位 ${i}</div>
+        <span>空</span>
+      </div>`;
+    }
   }
-  html += '</div><div class="actions"><button class="btn btn-outline" onclick="showPage(\'gamePage\')">返回</button></div>';
+  html += '</div><div class="actions"><button class="btn btn-outline" onclick="closeSaveLoad()">返回</button></div>';
   panel.innerHTML = html;
   showPage('saveLoadPage');
+}
+
+function closeSaveLoad() {
+  if (saveFrom === 'lobby') showPage('lobbyPage');
+  else showPage('gamePage');
 }
 
 async function doSave(slot) {
@@ -764,9 +735,9 @@ async function doSave(slot) {
     body: JSON.stringify({
       slot,
       scene_id: gameState.currentScene.id,
+      game_id: gameState.currentScene.game_id || null,
       title: gameState.currentScene.title,
-      play_time: 0,
-      affections: gameState.affections
+      play_time: gameState.playSeconds
     })
   });
   if (res.error) return toast(res.error);
@@ -779,14 +750,11 @@ async function doLoad(saveId) {
   if (res.error) return toast(res.error);
   const save = res.save;
 
-  // 恢复好感度
-  gameState.affections = {};
-  if (save.affections) {
-    save.affections.forEach(a => { gameState.affections[a.character_id] = a.value; });
-  }
+  if (!save.scene_id) return toast('该存档的场景已被删除');
 
-  // 加载场景
-  const sceneRes = await api('/api/play/scene/' + save.scene_id + '?affections=' + encodeURIComponent(JSON.stringify(gameState.affections)));
+  gameState.playSeconds = save.play_time || 0;
+
+  const sceneRes = await api('/api/play/scene/' + save.scene_id);
   if (sceneRes.scene) {
     loadScene(sceneRes.scene);
     toast('读档成功！');
@@ -795,61 +763,70 @@ async function doLoad(saveId) {
   }
 }
 
+async function deleteSave(saveId) {
+  const res = await api('/api/saves/' + saveId, { method: 'DELETE' });
+  if (res.error) return toast(res.error);
+  toast('存档已删除');
+  showSaveLoad(saveMode, saveFrom);
+}
+
 // ========== 结局画面 ==========
 function showEnding(ending) {
+  stopPlayTimer();
   const page = document.getElementById('endingPage');
   page.innerHTML = `
     <div class="ending-card">
       <div class="type ${ending.type}">${ending.type === 'perfect' ? '★ PERFECT ENDING' : ending.type === 'good' ? 'GOOD ENDING' : ending.type === 'bad' ? 'BAD ENDING' : 'ENDING'}</div>
       <h2>${ending.title}</h2>
       <div class="desc">${ending.description || ''}</div>
-      <button class="btn btn-purple" onclick="returnToLobby()">返回大厅</button>
+      <div class="flex gap-3 justify-center">
+        <button class="btn btn-purple" onclick="returnToLobby()">返回大厅</button>
+        <button class="btn btn-outline" onclick="replayGame()">重玩</button>
+      </div>
     </div>
   `;
   showPage('endingPage');
 }
 
-// ========== 结局图鉴 ==========
-async function showGallery() {
-  showPage('galleryPage');
-  const grid = document.getElementById('galleryGrid');
-  grid.innerHTML = '<div class="text-center text-text-dim p-10">加载中...</div>';
-
-  const [allRes, myRes] = await Promise.all([
-    api('/api/endings'),
-    api('/api/endings/my')
-  ]);
-  const unlockedIds = new Set((myRes.endings || []).map(e => e.id));
-  const all = allRes.endings || [];
-
-  grid.innerHTML = all.map(e => `
-    <div class="gallery-item ${unlockedIds.has(e.id) ? 'unlocked' : 'locked'}">
-      <h4>${unlockedIds.has(e.id) ? e.title : '???'}</h4>
-      <div class="gtype" style="color:${e.color || '#888'}">${e.character_name || ''} · ${e.type || ''}</div>
-      <div class="gtype">${unlockedIds.has(e.id) ? e.description || '' : '尚未解锁'}</div>
+function showCompleteDialog() {
+  stopPlayTimer();
+  const page = document.getElementById('endingPage');
+  page.innerHTML = `
+    <div class="ending-card">
+      <div class="type normal">THE END</div>
+      <h2>故事完结</h2>
+      <div class="desc">感谢你的游玩！</div>
+      <div class="flex gap-3 justify-center">
+        <button class="btn btn-purple" onclick="returnToLobby()">返回大厅</button>
+        <button class="btn btn-outline" onclick="replayGame()">重玩</button>
+      </div>
     </div>
-  `).join('');
+  `;
+  showPage('endingPage');
+}
 
-  if (all.length === 0) grid.innerHTML = '<div class="text-center text-text-dimmer p-[60px] col-span-full">暂无结局数据，请等待管理员添加</div>';
+function replayGame() {
+  showPage('lobbyPage');
+  startNewGame();
 }
 
 function returnToLobby() {
   hideChoices();
+  stopPlayTimer();
   clearInterval(gameState.timerInterval);
   if (gameState._choiceDelayId) { clearTimeout(gameState._choiceDelayId); gameState._choiceDelayId = null; }
   document.getElementById('gameVideo').pause();
+  document.getElementById('pauseDropdown').classList.remove('show');
   showPage('lobbyPage');
 }
 
 // ========== 键盘操作 ==========
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (document.getElementById('saveLoadPage').classList.contains('active')) showPage('gamePage');
+    if (document.getElementById('saveLoadPage').classList.contains('active')) closeSaveLoad();
     else if (document.getElementById('gamePage').classList.contains('active')) returnToLobby();
-    else if (document.getElementById('galleryPage').classList.contains('active')) returnToLobby();
     else if (document.getElementById('endingPage').classList.contains('active')) returnToLobby();
   }
-  // 1-9 快速选择
   if (document.getElementById('gamePage').classList.contains('active') && document.getElementById('choiceOverlay').classList.contains('active')) {
     const n = parseInt(e.key);
     if (n >= 1 && n <= 9) {

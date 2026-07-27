@@ -361,8 +361,40 @@ function onFullscreenChange() {
   } catch (e) { /* 不支持的浏览器静默失败 */ }
 }
 
+let sceneEndChecker = null
+let waitingForChoiceEnd = false
+
 watch(isLooping, (val) => {
   if (videoEl.value) videoEl.value.loop = val
+  if (val && videoEl.value && game.currentScene) {
+    const v = videoEl.value
+    const scene = game.currentScene
+    if (!sceneEndChecker) {
+      sceneEndChecker = () => {
+        if (!v || !isLooping.value || game.isEnding || waitingForChoiceEnd) return
+        if (v.duration && v.currentTime >= v.duration - 0.3) {
+          waitingForChoiceEnd = true
+          v.pause()
+          currentChoices.value = scene.choices
+          currentTimer.value = (scene.choice_timer == null || scene.choice_timer === 0) ? 0 : (scene.choice_timer || 10)
+          game.showingChoices = true
+          setTimeout(() => {
+            if (game.showingChoices) {
+              game.showingChoices = false
+              currentChoices.value = []
+              waitingForChoiceEnd = false
+              v.play().catch(() => {})
+            }
+          }, 3000)
+        }
+      }
+      v.addEventListener('timeupdate', sceneEndChecker)
+    }
+  } else if (!val && sceneEndChecker && videoEl.value) {
+    videoEl.value.removeEventListener('timeupdate', sceneEndChecker)
+    sceneEndChecker = null
+    waitingForChoiceEnd = false
+  }
 })
 
 function playScene() {
@@ -371,6 +403,12 @@ function playScene() {
   const v = videoEl.value
   if (!v) return
 
+  // 清理上一场景的末尾检测（重新挂载由 playScene 末尾处理）
+  if (sceneEndChecker) {
+    v.removeEventListener('timeupdate', sceneEndChecker)
+    sceneEndChecker = null
+    waitingForChoiceEnd = false
+  }
   v.onended = null
   if (game.choiceDelayId) { clearTimeout(game.choiceDelayId); game.choiceDelayId = null }
   game.showingChoices = false
@@ -405,6 +443,16 @@ function playScene() {
         currentTimer.value = (scene.choice_timer == null || scene.choice_timer === 0) ? 0 : (scene.choice_timer || 10)
         game.showingChoices = true
         game.choiceDelayId = null
+        // 循环模式下 3 秒无操作自动隐藏选项
+        if (isLooping.value) {
+          setTimeout(() => {
+            if (game.showingChoices) {
+              game.showingChoices = false
+              currentChoices.value = []
+              v.play().catch(() => {})
+            }
+          }, 3000)
+        }
       }, delay * 1000)
     } else {
       v.onended = () => {
@@ -421,6 +469,30 @@ function playScene() {
 
   if (game.isEnding && game.ending) {
     setTimeout(() => router.push('/ending'), 2000)
+  }
+
+  // 循环模式下重新挂载末尾检测（playScene 开头清理过）
+  if (isLooping.value && !sceneEndChecker && hasChoices && delay === 0) {
+    waitingForChoiceEnd = false
+    sceneEndChecker = () => {
+      if (!v || !isLooping.value || game.isEnding || waitingForChoiceEnd) return
+      if (v.duration && v.currentTime >= v.duration - 0.3) {
+        waitingForChoiceEnd = true
+        v.pause()
+        currentChoices.value = scene.choices
+        currentTimer.value = (scene.choice_timer == null || scene.choice_timer === 0) ? 0 : (scene.choice_timer || 10)
+        game.showingChoices = true
+        setTimeout(() => {
+          if (game.showingChoices) {
+            game.showingChoices = false
+            currentChoices.value = []
+            waitingForChoiceEnd = false
+            v.play().catch(() => {})
+          }
+        }, 3000)
+      }
+    }
+    v.addEventListener('timeupdate', sceneEndChecker)
   }
 }
 
