@@ -42,8 +42,10 @@ app.use((req, res, next) => {
 
 app.use(cors());
 app.use('/uploads', express.static('uploads', {
+  maxAge: '365d',
+  immutable: true,
   setHeaders: (res, filePath) => {
-    // 视频文件设置正确的 MIME 和缓存头
+    // 视频文件 MIME + 断点续传
     if (filePath.endsWith('.mp4')) {
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
@@ -53,6 +55,10 @@ app.use('/uploads', express.static('uploads', {
     } else if (filePath.endsWith('.mov')) {
       res.setHeader('Content-Type', 'video/quicktime');
       res.setHeader('Accept-Ranges', 'bytes');
+    } else if (filePath.endsWith('.mp3') || filePath.endsWith('.m4a')) {
+      res.setHeader('Content-Type', 'audio/mpeg');
+    } else if (filePath.endsWith('.vtt')) {
+      res.setHeader('Content-Type', 'text/vtt');
     }
   }
 }));
