@@ -383,6 +383,7 @@ watch(isLooping, (val) => {
               game.showingChoices = false
               currentChoices.value = []
               waitingForChoiceEnd = false
+              v.currentTime = 0
               v.play().catch(() => {})
             }
           }, 3000)
@@ -451,6 +452,8 @@ function playScene() {
             if (game.showingChoices) {
               game.showingChoices = false
               currentChoices.value = []
+              showSkipBtn.value = true
+              v.currentTime = 0
               v.play().catch(() => {})
             }
           }, 3000)
@@ -489,6 +492,7 @@ function playScene() {
             game.showingChoices = false
             currentChoices.value = []
             waitingForChoiceEnd = false
+            v.currentTime = 0
             v.play().catch(() => {})
           }
         }, 3000)
