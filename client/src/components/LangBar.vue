@@ -101,15 +101,48 @@ function applyAudio(audio) {
 
   // 桌面端：独立 <audio> 元素
   const a = document.createElement('audio')
+  a.preload = 'auto'
   a.src = '/' + (audio.file_path || '').replace(/\\\\/g, '/')
   a.load()
+
+  // 先静音视频 + 恢复音量，确保外挂失败时能正确回退默认音轨
   props.videoEl.muted = true
+  props.videoEl.volume = 1
   emit('update:audioEl', a)
+
   const syncAudio = () => { a.currentTime = props.videoEl.currentTime }
-  props.videoEl.onplay = () => { props.videoEl.muted = true; props.videoEl.volume = 1; syncAudio(); a.play().catch(() => { props.videoEl.muted = false }) }
+
+  const startAltAudio = () => {
+    props.videoEl.muted = true
+    props.videoEl.volume = 1
+
+    const playAudio = () => {
+      syncAudio()
+      a.play().catch(() => { props.videoEl.muted = false })
+    }
+
+    // 音频已缓存（后续场景）→ 直接播放；未缓存（首个场景）→ 等 canplay
+    if (a.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      playAudio()
+    } else {
+      let fallbackTimer
+      const onReady = () => {
+        clearTimeout(fallbackTimer)
+        playAudio()
+      }
+      fallbackTimer = setTimeout(() => {
+        a.removeEventListener('canplay', onReady)
+        props.videoEl.muted = false  // 超时回退默认音轨
+      }, 5000)
+      a.addEventListener('canplay', onReady, { once: true })
+    }
+  }
+
+  props.videoEl.onplay = startAltAudio
   props.videoEl.onpause = () => a.pause()
   props.videoEl.onseeked = syncAudio
-  if (!props.videoEl.paused) { props.videoEl.muted = true; props.videoEl.volume = 1; syncAudio(); a.play().catch(() => { props.videoEl.muted = false }) }
+
+  if (!props.videoEl.paused) startAltAudio()
   altAudio = a
 }
 
@@ -117,9 +150,13 @@ async function applyAudioMobile(audio) {
   // ★ 先同步 emit，确保 playScene 能立即 mute 视频
   emit('update:audioEl', { _webAudio: true })
 
+  // 先静音视频，外挂加载失败时回退默认音轨
+  props.videoEl.muted = true
+  props.videoEl.volume = 1
+
   try {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)()
-    const url = '/' + (audio.file_path || '').replace(/\\\\/g, '/')
+    const url = '/' + (audio.file_path || '').replace(/\\/g, '/')
     const resp = await fetch(url)
     if (!resp.ok) throw new Error('HTTP ' + resp.status)
     const buf = await resp.arrayBuffer()
@@ -134,8 +171,6 @@ async function applyAudioMobile(audio) {
       audioSource.start(0, Math.max(0, offset))
     }
 
-    props.videoEl.muted = true
-    props.videoEl.volume = 1
     props.videoEl.onplay = () => {
       props.videoEl.muted = true
       props.videoEl.volume = 1
@@ -153,7 +188,8 @@ async function applyAudioMobile(audio) {
     }
   } catch (e) {
     console.warn('[LangBar] 外挂音轨加载失败:', e.message)
-    // 不回退 unmute，保持静音
+    // 回退默认音轨
+    props.videoEl.muted = false
   }
 }
 
@@ -204,6 +240,10 @@ watch(() => props.audios, (val, oldVal) => {
       }
     }
     applyAudio(val[audioIdx.value])
+    // 保存当前音轨选择到 localStorage，确保存档时能记录（仅 applyAudio 不写 localStorage）
+    if (audioIdx.value >= 0 && audioIdx.value < val.length) {
+      localStorage.setItem('plot_game_audio_label', val[audioIdx.value].label)
+    }
   } else {
     audioIdx.value = -1
     stopAltAudio()

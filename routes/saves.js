@@ -56,14 +56,15 @@ router.get('/auto', async (req, res) => {
 // 存档（含自动存档 slot=0）
 router.post('/', async (req, res) => {
   try {
-    const { slot, scene_id, game_id, title, play_time } = req.body;
+    const { slot, scene_id, game_id, title, play_time, audio_label, sub_label } = req.body;
 
     await pool.query(
-      `INSERT INTO saves (user_id, slot, scene_id, game_id, title, play_time)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO saves (user_id, slot, scene_id, game_id, title, play_time, audio_label, sub_label)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE scene_id = VALUES(scene_id), game_id = VALUES(game_id),
-                               title = VALUES(title), play_time = VALUES(play_time)`,
-      [req.user.id, slot ?? 1, scene_id, game_id || null, title || '存档', play_time || 0]
+                               title = VALUES(title), play_time = VALUES(play_time),
+                               audio_label = VALUES(audio_label), sub_label = VALUES(sub_label)`,
+      [req.user.id, slot ?? 1, scene_id, game_id || null, title || '存档', play_time || 0, audio_label || null, sub_label || null]
     );
 
     const [saves] = await pool.query(

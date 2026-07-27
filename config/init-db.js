@@ -192,6 +192,8 @@ async function initDatabase() {
         slot INT NOT NULL DEFAULT 1 COMMENT '存档位 1-9',
         scene_id INT DEFAULT NULL COMMENT '当前场景',
         game_id INT DEFAULT NULL COMMENT '归属游戏',
+        audio_label VARCHAR(100) DEFAULT NULL COMMENT '音轨选择',
+        sub_label VARCHAR(100) DEFAULT NULL COMMENT '字幕选择',
         title VARCHAR(255) DEFAULT NULL COMMENT '存档标题',
         screenshot VARCHAR(500) DEFAULT NULL,
         play_time INT DEFAULT 0 COMMENT '已玩时间(秒)',

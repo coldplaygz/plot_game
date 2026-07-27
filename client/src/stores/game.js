@@ -65,7 +65,9 @@ export const useGameStore = defineStore('game', () => {
         scene_id: currentScene.value.id,
         game_id: currentScene.value.game_id || null,
         title: currentScene.value.title,
-        play_time: playSeconds.value
+        play_time: playSeconds.value,
+        audio_label: localStorage.getItem('plot_game_audio_label') || null,
+        sub_label: localStorage.getItem('plot_game_sub_label') || null
       })
     } catch (e) { /* 静默失败 */ }
   }
@@ -127,7 +129,9 @@ export const useGameStore = defineStore('game', () => {
       scene_id: currentScene.value.id,
       game_id: currentScene.value.game_id || null,
       title: title || currentScene.value.title,
-      play_time: playSeconds.value
+      play_time: playSeconds.value,
+      audio_label: localStorage.getItem('plot_game_audio_label') || null,
+      sub_label: localStorage.getItem('plot_game_sub_label') || null
     })
     if (res.error) { toast.show(res.error); return false }
     toast.show('存档成功！')
@@ -140,6 +144,12 @@ export const useGameStore = defineStore('game', () => {
     const save = res.save
 
     if (!save.scene_id) { toast.show('该存档的场景已被删除'); return false }
+
+    // 恢复存档时的音轨/字幕选择
+    if (save.audio_label) localStorage.setItem('plot_game_audio_label', save.audio_label)
+    else localStorage.removeItem('plot_game_audio_label')
+    if (save.sub_label) localStorage.setItem('plot_game_sub_label', save.sub_label)
+    else localStorage.removeItem('plot_game_sub_label')
 
     playSeconds.value = save.play_time || 0
 

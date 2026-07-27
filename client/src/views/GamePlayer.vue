@@ -420,7 +420,9 @@ function playScene() {
   v.currentTime = 0
   v.src = scene.file_path ? '/' + scene.file_path.replace(/\\\\/g, '/') : ''
   // 外挂音轨激活时双重静音（attribute + volume，load 不重置 volume）
-  if (game.currentAudioEl) {
+  // 仅检查 localStorage：读档时 LangBar 还没挂载，靠 localStorage 预判
+  const hasAltAudio = !!localStorage.getItem('plot_game_audio_label')
+  if (hasAltAudio) {
     v.setAttribute('muted', '')
     v.volume = 0
   } else {
