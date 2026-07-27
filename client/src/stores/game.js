@@ -12,25 +12,34 @@ export const useGameStore = defineStore('game', () => {
   const authStore = useAuthStore()
 
   const currentScene = ref(null)
-  const affections = ref({})
-  const characters = ref([])
   const isEnding = ref(false)
   const ending = ref(null)
   const choiceDelayId = ref(null)
   const timerInterval = ref(null)
   const showingChoices = ref(false)
   const currentAudioEl = ref(null)
+  const playSeconds = ref(0)
+  let playTimer = null
 
   function langParam() {
     const l = langStore.current
     return l && l !== 'zh' ? { lang: l } : {}
   }
 
+  function startPlayTimer() {
+    stopPlayTimer()
+    playTimer = setInterval(() => { playSeconds.value++ }, 1000)
+  }
+
+  function stopPlayTimer() {
+    if (playTimer) { clearInterval(playTimer); playTimer = null }
+  }
+
   async function startNewGame(gameId) {
     const params = gameId ? { game_id: gameId, ...langParam() } : langParam()
     const res = await get('/play/start', params)
     if (res.error) { toast.show(res.error); return }
-    affections.value = {}
+    playSeconds.value = 0
     loadScene(res.scene)
   }
 
@@ -43,7 +52,32 @@ export const useGameStore = defineStore('game', () => {
     isEnding.value = scene.is_ending && scene.ending
     if (scene.ending) ending.value = scene.ending
     else ending.value = null
-    if (scene.characters) characters.value = scene.characters
+
+    startPlayTimer()
+    autoSave()
+  }
+
+  async function autoSave() {
+    if (!currentScene.value) return
+    try {
+      await post('/saves', {
+        slot: 0,
+        scene_id: currentScene.value.id,
+        game_id: currentScene.value.game_id || null,
+        title: currentScene.value.title,
+        play_time: playSeconds.value
+      })
+    } catch (e) { /* 静默失败 */ }
+  }
+
+  async function continueGame() {
+    try {
+      const res = await get('/saves/auto')
+      if (res.save && res.save.scene_id) {
+        return await loadGame(res.save.id)
+      }
+    } catch (e) { /* ignore */ }
+    return false
   }
 
   async function makeChoice(choiceId) {
@@ -55,8 +89,7 @@ export const useGameStore = defineStore('game', () => {
     try {
       res = await post('/play/choose', {
         choice_id: choiceId,
-        scene_id: currentScene.value.id,
-        affections: affections.value
+        scene_id: currentScene.value.id
       })
     } catch (e) {
       if (e.status === 402) {
@@ -67,29 +100,23 @@ export const useGameStore = defineStore('game', () => {
     }
     if (res.error) { toast.show(res.error); return null }
 
-    // 更新积分
     if (res.points_consumed && res.points_balance !== undefined) {
       if (authStore.user) authStore.user.points = res.points_balance
       toast.show('-1 💎 剩余 ' + res.points_balance)
     }
 
-    affections.value = res.affections || {}
-
     if (res.next_scene_id) {
-      const sceneRes = await get('/play/scene/' + res.next_scene_id, {
-        affections: JSON.stringify(affections.value),
-        ...langParam()
-      })
+      const sceneRes = await get('/play/scene/' + res.next_scene_id, langParam())
       if (sceneRes.scene) {
         loadScene(sceneRes.scene)
-        return { scene: sceneRes.scene, changes: res.affection_changes }
+        return { scene: sceneRes.scene }
       } else {
         toast.show('场景加载失败')
         return null
       }
     } else {
-      toast.show('故事完结')
-      return { finished: true, changes: res.affection_changes }
+      stopPlayTimer()
+      return { finished: true }
     }
   }
 
@@ -98,9 +125,9 @@ export const useGameStore = defineStore('game', () => {
     const res = await post('/saves', {
       slot,
       scene_id: currentScene.value.id,
+      game_id: currentScene.value.game_id || null,
       title: title || currentScene.value.title,
-      play_time: 0,
-      affections: affections.value
+      play_time: playSeconds.value
     })
     if (res.error) { toast.show(res.error); return false }
     toast.show('存档成功！')
@@ -112,15 +139,11 @@ export const useGameStore = defineStore('game', () => {
     if (res.error) { toast.show(res.error); return false }
     const save = res.save
 
-    affections.value = {}
-    if (save.affections) {
-      save.affections.forEach(a => { affections.value[a.character_id] = a.value })
-    }
+    if (!save.scene_id) { toast.show('该存档的场景已被删除'); return false }
 
-    const sceneRes = await get('/play/scene/' + save.scene_id, {
-      affections: JSON.stringify(affections.value),
-      ...langParam()
-    })
+    playSeconds.value = save.play_time || 0
+
+    const sceneRes = await get('/play/scene/' + save.scene_id, langParam())
     if (sceneRes.scene) {
       loadScene(sceneRes.scene)
       toast.show('读档成功！')
@@ -131,24 +154,9 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
-  async function fetchCharacters() {
-    const res = await get('/characters')
-    if (res.characters) characters.value = res.characters
-    return res.characters || []
-  }
-
-  async function fetchEndings() {
-    const res = await get('/endings')
-    return res.endings || []
-  }
-
-  async function fetchMyEndings() {
-    const res = await get('/endings/my')
-    return res.endings || []
-  }
-
   function cleanup() {
     clearInterval(timerInterval.value)
+    stopPlayTimer()
     if (choiceDelayId.value) { clearTimeout(choiceDelayId.value); choiceDelayId.value = null }
     if (currentAudioEl.value) {
       try {
@@ -160,17 +168,23 @@ export const useGameStore = defineStore('game', () => {
     showingChoices.value = false
   }
 
+  async function fetchGameSaves(gameId) {
+    const res = await get('/saves', { game_id: gameId })
+    return res.saves || []
+  }
+
   function returnToLobby() {
     cleanup()
     currentScene.value = null
   }
 
   return {
-    currentScene, affections, characters, isEnding, ending,
+    currentScene, isEnding, ending,
     choiceDelayId, timerInterval, showingChoices, currentAudioEl,
+    playSeconds,
     startNewGame, loadScene, makeChoice,
-    saveGame, loadGame,
-    fetchCharacters, fetchEndings, fetchMyEndings,
+    saveGame, loadGame, continueGame, autoSave, fetchGameSaves,
+    startPlayTimer, stopPlayTimer,
     cleanup, returnToLobby
   }
 })

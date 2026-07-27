@@ -18,7 +18,7 @@
       @loadedmetadata="onLoadedMetadata"
     ></video>
 
-    <!-- ═══ 顶栏：返回 + 场景标题 ═══ -->
+    <!-- ═══ 顶栏：返回 + 场景标题 + 菜单 ═══ -->
     <div
       class="relative z-20 shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 pt-[env(safe-area-inset-top)] pb-2 bg-gradient-to-b from-black/70 to-transparent"
     >
@@ -28,7 +28,26 @@
         <svg viewBox="0 0 24 24" class="w-5 h-5 sm:w-4 sm:h-4" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
       </button>
       <span v-if="game.currentScene" class="flex-1 min-w-0 truncate text-sm text-white/70">{{ sceneTitle }}</span>
+      <div class="relative shrink-0">
+        <button @click="showGameMenu = !showGameMenu"
+          class="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/25 active:bg-white/35 transition-colors text-white"
+          title="菜单">
+          <svg viewBox="0 0 24 24" class="w-5 h-5 sm:w-4 sm:h-4" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+        </button>
+        <div v-if="showGameMenu" class="fixed inset-0 z-40" @click="showGameMenu = false"></div>
+        <div v-if="showGameMenu" class="absolute top-full right-0 mt-2 w-40 bg-surface-card border border-border-dim rounded-xl overflow-hidden z-50 shadow-xl">
+          <button @click="openSaveLoad('save')"
+            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors">💾 存档</button>
+          <button @click="openSaveLoad('load')"
+            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors">📂 读档</button>
+          <button @click="onReturnToLobby()"
+            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors">🏠 返回大厅</button>
+        </div>
+      </div>
     </div>
+
+    <!-- 存档/读档弹窗 -->
+    <SaveLoadModal v-if="saveLoadVisible" :mode="saveLoadMode" @close="saveLoadVisible = false" />
 
     <!-- ═══ 中间区：点击层 + 缓冲 + 大播放按钮 + 转码警告 ═══ -->
     <div class="relative z-10 flex-1 min-h-0 flex items-center justify-center">
@@ -187,6 +206,7 @@ import { useToast } from '../composables/useToast'
 import ChoiceOverlay from '../components/ChoiceOverlay.vue'
 import LangBar from '../components/LangBar.vue'
 import SubtitleDisplay from '../components/SubtitleDisplay.vue'
+import SaveLoadModal from '../components/SaveLoadModal.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -209,6 +229,15 @@ const playbackRate = ref(1)
 const isLooping = ref(false)
 const showSpeedMenu = ref(false)
 const showMoreMenu = ref(false)
+const showGameMenu = ref(false)
+const saveLoadVisible = ref(false)
+const saveLoadMode = ref('save')
+
+function openSaveLoad(mode) {
+  showGameMenu.value = false
+  saveLoadMode.value = mode
+  saveLoadVisible.value = true
+}
 
 // 场景切换转场（闪黑）
 const showTransition = ref(false)
@@ -386,6 +415,8 @@ function playScene() {
         }
       }
     }
+  } else if (!game.isEnding) {
+    v.onended = () => { router.push('/ending') }
   }
 
   if (game.isEnding && game.ending) {
@@ -437,7 +468,8 @@ async function onChoose(choiceId) {
   }
 
   if (result.finished) {
-    setTimeout(() => router.push('/'), 3000)
+    showTransition.value = false
+    router.push('/ending')
   } else if (result.scene) {
     await nextTick()
     playScene()

@@ -191,6 +191,7 @@ async function initDatabase() {
         user_id INT NOT NULL,
         slot INT NOT NULL DEFAULT 1 COMMENT '存档位 1-9',
         scene_id INT DEFAULT NULL COMMENT '当前场景',
+        game_id INT DEFAULT NULL COMMENT '归属游戏',
         title VARCHAR(255) DEFAULT NULL COMMENT '存档标题',
         screenshot VARCHAR(500) DEFAULT NULL,
         play_time INT DEFAULT 0 COMMENT '已玩时间(秒)',
@@ -295,6 +296,13 @@ async function initDatabase() {
         await conn.query('ALTER TABLE scenes ADD COLUMN game_id INT DEFAULT NULL AFTER description');
         await conn.query('ALTER TABLE scenes ADD FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL');
         console.log('[InitDB] 已为 scenes 表添加 game_id 字段');
+      }
+      // saves 表添加 game_id
+      const [svCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='saves' AND COLUMN_NAME='game_id'", [dbName]);
+      if (svCols.length === 0) {
+        await conn.query('ALTER TABLE saves ADD COLUMN game_id INT DEFAULT NULL AFTER scene_id');
+        await conn.query('ALTER TABLE saves ADD FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL');
+        console.log('[InitDB] 已为 saves 表添加 game_id 字段');
       }
     } catch (e) {
       console.warn('[InitDB] 迁移 game_id 字段失败 (可能已存在):', e.message);

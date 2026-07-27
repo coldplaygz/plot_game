@@ -9,7 +9,6 @@ const routes = [
   { path: '/game', name: 'game', component: () => import('../views/GamePlayer.vue'), meta: { requiresAuth: true } },
   { path: '/play/:gameId', name: 'play', component: () => import('../views/GamePlayer.vue'), meta: { requiresAuth: true } },
   { path: '/ending', name: 'ending', component: () => import('../views/Ending.vue'), meta: { requiresAuth: true } },
-  { path: '/gallery', name: 'gallery', component: () => import('../views/Gallery.vue'), meta: { requiresAuth: true } },
 
   // 管理端
   { path: '/admin/login', name: 'admin-login', component: () => import('../views/AdminLogin.vue') },
