@@ -29,6 +29,12 @@ function t(i18nJson, lang) {
   } catch { return null; }
 }
 
+// 规范化 HLS 路径为 / 开头的 URL
+function normalizeHlsUrl(p) {
+  if (!p) return '';
+  return '/' + String(p).replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
 /**
  * GET /api/play/start
  * 开始新游戏 - 返回起始场景
@@ -47,7 +53,8 @@ router.get('/start', async (req, res) => {
     }
 
     const [rows] = await pool.query(`
-      SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status
+      SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status,
+             v.hls_master_path, v.hls_status
       FROM scenes s
       JOIN videos v ON s.video_id = v.id
       ${whereClause}
@@ -86,10 +93,12 @@ router.get('/start', async (req, res) => {
     scene.characters = characters.map(c => ({ ...c, affection: 0 }));
 
     // 音轨 & 字幕
-    const [audios] = await pool.query('SELECT * FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
-    const [subtitles] = await pool.query('SELECT * FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
-    scene.audios = audios;
-    scene.subtitles = subtitles;
+    const [audios] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    const [subtitles] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    // 补充 HLS URL 供前端使用
+    scene.hls_url = scene.hls_status === 'done' ? normalizeHlsUrl(scene.hls_master_path) : '';
+    scene.audios = audios.map(a => ({ ...a, hls_url: normalizeHlsUrl(a.hls_playlist_path) }));
+    scene.subtitles = subtitles.map(s => ({ ...s, hls_url: normalizeHlsUrl(s.hls_playlist_path) }));
 
     // 移除旧的自动存档（slot 0 为自动存档）
     await pool.query('DELETE FROM saves WHERE user_id = ? AND slot = 0', [req.user.id]);
@@ -123,7 +132,8 @@ router.get('/scene/:sceneId', async (req, res) => {
     } catch (e) { /* ignore */ }
 
     const [rows] = await pool.query(`
-      SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status
+      SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status,
+             v.hls_master_path, v.hls_status
       FROM scenes s
       JOIN videos v ON s.video_id = v.id
       WHERE s.id = ?
@@ -139,12 +149,14 @@ router.get('/scene/:sceneId', async (req, res) => {
     // 翻译场景标题
     const sceneTitleI18n = t(scene.title_i18n, lang);
     if (sceneTitleI18n) scene.title = sceneTitleI18n;
-    
+
     // 音轨 & 字幕
-    const [audios] = await pool.query('SELECT * FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
-    const [subtitles] = await pool.query('SELECT * FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
-    scene.audios = audios;
-    scene.subtitles = subtitles;
+    const [audios] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    const [subtitles] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+    // 补充 HLS URL 供前端使用
+    scene.hls_url = scene.hls_status === 'done' ? normalizeHlsUrl(scene.hls_master_path) : '';
+    scene.audios = audios.map(a => ({ ...a, hls_url: normalizeHlsUrl(a.hls_playlist_path) }));
+    scene.subtitles = subtitles.map(s => ({ ...s, hls_url: normalizeHlsUrl(s.hls_playlist_path) }));
     
     // choice_delay 未设置时默认取视频完整时长
     if ((!scene.choice_delay || scene.choice_delay === 0) && scene.choices.length > 0) {

@@ -283,6 +283,82 @@ async function initDatabase() {
 
     console.log('[InitDB] 15 张数据表(含积分体系)创建/确认完成');
 
+    // ============ 16. 视频音轨表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS video_audios (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        video_id INT NOT NULL,
+        language VARCHAR(20) NOT NULL COMMENT '语言代码 zh/en/ja/ko',
+        label VARCHAR(100) NOT NULL COMMENT '显示标签',
+        file_path VARCHAR(500) NOT NULL COMMENT '音轨源文件路径(.mp3/.m4a)',
+        file_size BIGINT DEFAULT 0,
+        is_default TINYINT(1) DEFAULT 0,
+        hls_playlist_path VARCHAR(500) DEFAULT NULL COMMENT 'HLS 子播放列表 audio_xx.m3u8 路径',
+        hls_status VARCHAR(20) DEFAULT 'none' COMMENT 'none|queued|transcoding|done|failed',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+
+    // ============ 17. 视频字幕表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS video_subtitles (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        video_id INT NOT NULL,
+        language VARCHAR(20) NOT NULL,
+        label VARCHAR(100) NOT NULL,
+        file_path VARCHAR(500) NOT NULL COMMENT '字幕源文件(.vtt)',
+        file_size BIGINT DEFAULT 0,
+        is_default TINYINT(1) DEFAULT 0,
+        hls_playlist_path VARCHAR(500) DEFAULT NULL COMMENT 'HLS 字幕子播放列表 sub_xx.m3u8 路径',
+        hls_status VARCHAR(20) DEFAULT 'none' COMMENT 'none|queued|transcoding|done|failed',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+
+    console.log('[InitDB] 音轨/字幕表创建/确认完成');
+
+    // ============ 迁移: 为 videos 表添加 HLS 字段 ============
+    try {
+      const hlsCols = ['hls_master_path', 'hls_dir', 'hls_status'];
+      for (const col of hlsCols) {
+        const [ex] = await conn.query(
+          "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='videos' AND COLUMN_NAME=?",
+          [dbName, col]
+        );
+        if (ex.length === 0) {
+          if (col === 'hls_master_path') {
+            await conn.query("ALTER TABLE videos ADD COLUMN hls_master_path VARCHAR(500) DEFAULT NULL COMMENT 'HLS master.m3u8 路径' AFTER thumbnail");
+          } else if (col === 'hls_dir') {
+            await conn.query("ALTER TABLE videos ADD COLUMN hls_dir VARCHAR(500) DEFAULT NULL COMMENT 'HLS 切片目录' AFTER hls_master_path");
+          } else if (col === 'hls_status') {
+            await conn.query("ALTER TABLE videos ADD COLUMN hls_status VARCHAR(20) DEFAULT 'none' COMMENT 'none|queued|transcoding|done|failed' AFTER hls_dir");
+          }
+          console.log('[InitDB] 已为 videos 表添加 ' + col + ' 字段');
+        }
+      }
+      // 旧表兼容：若 video_audios/video_subtitles 已存在但缺 hls 字段，补齐
+      for (const tbl of ['video_audios', 'video_subtitles']) {
+        for (const col of ['hls_playlist_path', 'hls_status']) {
+          const [ex] = await conn.query(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND COLUMN_NAME=?",
+            [dbName, tbl, col]
+          );
+          if (ex.length === 0) {
+            if (col === 'hls_playlist_path') {
+              await conn.query(`ALTER TABLE ${tbl} ADD COLUMN hls_playlist_path VARCHAR(500) DEFAULT NULL COMMENT 'HLS 子播放列表路径' AFTER is_default`);
+            } else {
+              await conn.query(`ALTER TABLE ${tbl} ADD COLUMN hls_status VARCHAR(20) DEFAULT 'none' COMMENT 'none|queued|transcoding|done|failed' AFTER hls_playlist_path`);
+            }
+            console.log(`[InitDB] 已为 ${tbl} 表添加 ${col} 字段`);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[InitDB] 迁移 HLS 字段失败 (可能已存在):', e.message);
+    }
+
     // ============ 迁移: 为 videos 和 scenes 添加 game_id 字段 ============
     try {
       // videos 表添加 game_id

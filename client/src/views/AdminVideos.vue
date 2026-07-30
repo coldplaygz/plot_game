@@ -68,6 +68,15 @@
       <div v-if="batchErrors.length" class="mt-2 space-y-1">
         <div v-for="(err, i) in batchErrors" :key="i" class="p-2 bg-[#1a0a0a] border border-[#ef4444]/30 rounded text-xs text-[#ef4444]">{{ err }}</div>
       </div>
+      <!-- 一键重建所有存量视频的 HLS -->
+      <div class="mt-3 pt-3 border-t border-border-dim flex items-center gap-3">
+        <button
+          class="inline-flex items-center gap-1.5 px-4 py-2 bg-[#7c3aed] text-white border-none rounded-lg text-sm cursor-pointer hover:bg-[#6d28d9] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          :disabled="rebuildingAll"
+          @click="rebuildAllHls"
+        >{{ rebuildingAll ? '排队中...' : '🔧 一键重建所有 HLS' }}</button>
+        <span class="text-xs text-text-dim">将所有视频加入 HLS 多音轨转码队列（含音轨/字幕打包）</span>
+      </div>
     </div>
 
     <!-- Table -->
@@ -81,6 +90,7 @@
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">大小</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">时长</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">状态</th>
+          <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">HLS</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">关联</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">日期</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">操作</th>
@@ -88,7 +98,7 @@
       </thead>
       <tbody>
         <tr v-if="!videos.length">
-          <td colspan="10" class="text-center py-[50px] px-5 text-text-dimmest text-sm">暂无视频</td>
+          <td colspan="11" class="text-center py-[50px] px-5 text-text-dimmest text-sm">暂无视频</td>
         </tr>
         <tr v-for="v in pageVideos" :key="v.id" class="hover:bg-[#1a1a3e]">
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ v.id }}</td>
@@ -103,12 +113,20 @@
             <span v-else-if="v.transcode_status === 'failed'" class="inline-flex items-center gap-1 px-2 py-0.5 bg-red-500/15 text-red-400 border border-red-500/30 rounded-full text-[11px]">⚠ 转码失败</span>
             <span v-else class="inline-flex items-center gap-1 px-2 py-0.5 bg-green-500/15 text-green-400 border border-green-500/30 rounded-full text-[11px]">✓ 就绪</span>
           </td>
+          <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
+            <span v-if="v.hls_status === 'queued'" class="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/15 text-blue-400 border border-blue-500/30 rounded-full text-[11px]">🕐 排队</span>
+            <span v-else-if="v.hls_status === 'transcoding'" class="inline-flex items-center gap-1 px-2 py-0.5 bg-yellow-500/15 text-yellow-400 border border-yellow-500/30 rounded-full text-[11px]">⏳ 打包</span>
+            <span v-else-if="v.hls_status === 'failed'" class="inline-flex items-center gap-1 px-2 py-0.5 bg-red-500/15 text-red-400 border border-red-500/30 rounded-full text-[11px]">⚠ 失败</span>
+            <span v-else-if="v.hls_status === 'done'" class="inline-flex items-center gap-1 px-2 py-0.5 bg-green-500/15 text-green-400 border border-green-500/30 rounded-full text-[11px]">✓ HLS</span>
+            <span v-else class="inline-flex items-center gap-1 px-2 py-0.5 bg-white/5 text-text-dimmer border border-border-dim rounded-full text-[11px]">—</span>
+          </td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ v.scene_count || 0 }}个场景</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ formatDate(v.created_at) }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#059669] text-white hover:bg-[#047857]" @click="playVideo(v)">▶</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="manageMedia(v)">🎵字幕</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="replaceVideo(v)">🔄</button>
+            <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#7c3aed] text-white hover:bg-[#6d28d9] ml-1" @click="rebuildHls(v)" title="重建 HLS 多音轨流">HLS</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c] ml-1" @click="deleteVideo(v.id)">删除</button>
           </td>
         </tr>
@@ -147,18 +165,24 @@
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">标签</th>
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">大小</th>
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">默认</th>
+              <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">HLS</th>
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!audios.length">
-              <td colspan="5" class="text-text-dimmest px-[14px] py-[10px]">暂无音轨</td>
+              <td colspan="6" class="text-text-dimmest px-[14px] py-[10px]">暂无音轨</td>
             </tr>
             <tr v-for="a in audios" :key="'a'+a.id" class="hover:bg-[#1a1a3e]">
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ a.language }}</td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ a.label }}</td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ (a.file_size / 1024).toFixed(1) }}KB</td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ a.is_default ? '✅' : '' }}</td>
+              <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
+                <span v-if="a.hls_status === 'done'" class="text-green-400 text-[11px]">✓</span>
+                <span v-else-if="a.hls_status === 'failed'" class="text-red-400 text-[11px]">⚠</span>
+                <span v-else class="text-text-dimmer text-[11px]">—</span>
+              </td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
                 <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c]" @click="deleteMediaItem('audio', a.id)">删除</button>
               </td>
@@ -190,18 +214,24 @@
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">标签</th>
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">大小</th>
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">默认</th>
+              <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">HLS</th>
               <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="!subtitles.length">
-              <td colspan="5" class="text-text-dimmest px-[14px] py-[10px]">暂无字幕</td>
+              <td colspan="6" class="text-text-dimmest px-[14px] py-[10px]">暂无字幕</td>
             </tr>
             <tr v-for="s in subtitles" :key="'s'+s.id" class="hover:bg-[#1a1a3e]">
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.language }}</td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.label }}</td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ (s.file_size / 1024).toFixed(1) }}KB</td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.is_default ? '✅' : '' }}</td>
+              <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
+                <span v-if="s.hls_status === 'done'" class="text-green-400 text-[11px]">✓</span>
+                <span v-else-if="s.hls_status === 'failed'" class="text-red-400 text-[11px]">⚠</span>
+                <span v-else class="text-text-dimmer text-[11px]">—</span>
+              </td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
                 <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c]" @click="deleteMediaItem('subtitle', s.id)">删除</button>
               </td>
@@ -240,7 +270,7 @@ import AppPagination from '../components/AppPagination.vue'
 import VideoPlayerModal from '../components/VideoPlayerModal.vue'
 import AppModal from '../components/AppModal.vue'
 
-const { get, del, upload } = useApi()
+const { get, post, del, upload } = useApi()
 const { show } = useToast()
 
 // Data
@@ -266,6 +296,9 @@ const batchDone = ref(0)
 const batchTotal = ref(0)
 const batchResult = ref('')
 const batchErrors = ref([])
+
+// HLS 重建
+const rebuildingAll = ref(false)
 
 // Single Upload (for replace, media)
 const uploading = ref(false)
@@ -487,6 +520,37 @@ async function deleteVideo(id) {
     loadVideos()
   } catch (e) {
     show('删除失败: ' + e.message)
+  }
+}
+
+// 重建单个视频的 HLS 多音轨流
+async function rebuildHls(v) {
+  if (!confirm(`确定重建视频 "${v.title}" 的 HLS 多音轨流？\n（将重新切片视频/音轨/字幕）`)) return
+  try {
+    await post('/videos/' + v.id + '/rebuild-hls')
+    show('HLS 重建任务已加入队列')
+    loadVideos()
+  } catch (e) {
+    show('HLS 重建失败: ' + (e.message || '未知错误'))
+  }
+}
+
+// 一键重建所有存量视频的 HLS
+async function rebuildAllHls() {
+  if (!videos.value.length) {
+    show('暂无视频可重建')
+    return
+  }
+  if (!confirm(`确定将所有 ${videos.value.length} 个视频加入 HLS 重建队列？\n（会重新切片所有视频/音轨/字幕，耗时较长）`)) return
+  rebuildingAll.value = true
+  try {
+    const res = await post('/videos/rebuild-hls-all')
+    show(`已加入 ${res.total} 个视频到 HLS 重建队列`)
+    loadVideos()
+  } catch (e) {
+    show('批量重建失败: ' + (e.message || '未知错误'))
+  } finally {
+    rebuildingAll.value = false
   }
 }
 

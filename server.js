@@ -45,8 +45,15 @@ app.use('/uploads', express.static('uploads', {
   maxAge: '365d',
   immutable: true,
   setHeaders: (res, filePath) => {
-    // 视频文件 MIME + 断点续传
-    if (filePath.endsWith('.mp4')) {
+    // HLS 流媒体 MIME
+    if (filePath.endsWith('.m3u8')) {
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-cache');
+    } else if (filePath.endsWith('.ts')) {
+      res.setHeader('Content-Type', 'video/mp2t');
+      res.setHeader('Accept-Ranges', 'bytes');
+    } else if (filePath.endsWith('.mp4')) {
+      // 视频文件 MIME + 断点续传
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Accept-Ranges', 'bytes');
     } else if (filePath.endsWith('.webm')) {
@@ -126,8 +133,11 @@ app.listen(PORT, HOST, () => {
 });
 
 const initDB = require('./config/init-db');
+const { recoverPendingHLS } = require('./utils/hls-transcode');
 initDB().then(() => {
   console.log('[Server] 数据库初始化完成，服务已就绪');
+  // 启动时恢复中断的 HLS 转码任务
+  recoverPendingHLS();
 }).catch(err => {
   console.error('[Server] 数据库初始化失败:', err.message);
 });

@@ -112,6 +112,7 @@
         </div>
       </div>
     </Teleport>
+
   </div>
 </template>
 
@@ -184,7 +185,8 @@ function closeDialog() {
   showSaves.value = false
 }
 
-function startNew() {
+async function startNew() {
+  if (!selectedGame.value) return
   dialogVisible.value = false
   if (auth.isLoggedIn) {
     router.push('/play/' + selectedGame.value.id)

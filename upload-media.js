@@ -1,71 +1,138 @@
-const http = require('http');
+// upload-media.js — 为视频上传多语言音轨和字幕
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 
-const loginData = JSON.stringify({username:'admin',password:'admin123'});
+const BASE = 'http://localhost:3000';
+const MEDIA = 'uploads/media';
 
-function getToken() {
-  return new Promise((resolve) => {
-    const req = http.request({hostname:'localhost',port:3000,path:'/api/auth/login',method:'POST',headers:{'Content-Type':'application/json','Content-Length':loginData.length}}, res => {
-      let body=''; res.on('data',c=>body+=c);
-      res.on('end',()=>resolve(JSON.parse(body).token));
+// 语言配置
+const LANGS = [
+  { code: 'zh', label: '中文' },
+  { code: 'en', label: 'English' },
+  { code: 'ja', label: '日本語' },
+  { code: 'ko', label: '한국어' },
+];
+
+function apiPost(url, token, formData) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const boundary = '----FormBoundary' + Math.random().toString(36).slice(2);
+    const chunks = [];
+
+    for (const [key, val] of Object.entries(formData)) {
+      if (val instanceof Object && val.filePath) {
+        // File field
+        const fileContent = fs.readFileSync(val.filePath);
+        const filename = path.basename(val.filePath);
+        chunks.push(Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${key}"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+        ));
+        chunks.push(fileContent);
+        chunks.push(Buffer.from('\r\n'));
+      } else {
+        chunks.push(Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${val}\r\n`
+        ));
+      }
+    }
+    chunks.push(Buffer.from(`--${boundary}--\r\n`));
+
+    const body = Buffer.concat(chunks);
+    const req = http.request(u, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length,
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { resolve(data); }
+      });
     });
-    req.write(loginData); req.end();
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
 }
 
-function uploadFile(token, videoId, type, filePath, language, label, isDefault) {
-  return new Promise((resolve) => {
-    const boundary = '----Boundary' + Math.random().toString(36).slice(2);
-    const filename = path.basename(filePath);
-    const fileContent = fs.readFileSync(filePath);
-    
-    const headParts = [];
-    for (const [k, v] of [['language',language],['label',label],['is_default',isDefault?'1':'0']]) {
-      headParts.push(Buffer.from('--' + boundary + '\r\nContent-Disposition: form-data; name="' + k + '"\r\n\r\n' + v + '\r\n', 'utf8'));
-    }
-    headParts.push(Buffer.from('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; filename="' + filename + '"\r\nContent-Type: application/octet-stream\r\n\r\n', 'utf8'));
-    
-    const body = Buffer.concat([Buffer.concat(headParts), fileContent, Buffer.from('\r\n--' + boundary + '--\r\n', 'utf8')]);
-    const url = '/api/media/' + videoId + '/' + (type==='audio'?'audios':'subtitles');
-    
-    const req = http.request({hostname:'localhost',port:3000,path:url,method:'POST',headers:{
-      'Authorization':'Bearer '+token,'Content-Type':'multipart/form-data; boundary='+boundary,'Content-Length':body.length
-    }}, res => {
-      let d=''; res.on('data',c=>d+=c);
-      res.on('end',()=>{ try{resolve(JSON.parse(d))}catch(e){resolve({error:d})} });
+async function login() {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ username: 'admin', password: 'admin123' });
+    const req = http.request(`${BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        const r = JSON.parse(data);
+        if (r.token) resolve(r.token);
+        else reject(new Error('登录失败: ' + JSON.stringify(r)));
+      });
     });
-    req.write(body); req.end();
+    req.on('error', reject);
+    req.write(body);
+    req.end();
   });
 }
 
 async function main() {
-  const token = await getToken();
-  
-  const cfg = [
-    ['zh','中文配音','zh','中文字幕'],
-    ['en','English Dub','en','English Subs'],
-    ['ja','日本語吹替','ja','日本語字幕'],
-  ];
-  
-  for (let vid = 1; vid <= 4; vid++) {
-    console.log('=== 场景' + vid + ' ===');
-    for (const [aLang, aLabel, sLang, sLabel] of cfg) {
-      const isDef = aLang === 'zh';
-      
-      const af = '/tmp/scene' + vid + '_' + aLang + '.mp3';
-      if (fs.existsSync(af)) {
-        const r = await uploadFile(token, vid, 'audio', af, aLang, aLabel, isDef);
-        console.log('  音轨 ' + aLabel + ': ' + (r.message||r.error));
-      }
-      
-      const sf = '/tmp/scene' + vid + '_' + sLang + '.vtt';
-      if (fs.existsSync(sf)) {
-        const r = await uploadFile(token, vid, 'subtitle', sf, sLang, sLabel, isDef);
-        console.log('  字幕 ' + sLabel + ': ' + (r.message||r.error));
-      }
+  const token = await login();
+  console.log('登录成功, token=', token.slice(0, 20) + '...');
+
+  for (const vid of [63, 64]) {
+    const files = fs.readdirSync(MEDIA).filter(f => f.startsWith(`v${vid}-`));
+    const audios = files.filter(f => f.endsWith('.mp3'));
+    const subtitles = files.filter(f => f.endsWith('.vtt'));
+
+    for (const f of audios) {
+      // v63-zh-1785309141034.mp3 → lang=zh
+      const lang = f.split('-')[1];
+      const cfg = LANGS.find(l => l.code === lang);
+      const label = cfg ? cfg.label : lang;
+      const filePath = path.join(MEDIA, f);
+      console.log(`上传音轨: video=${vid} lang=${lang} label=${label} file=${f}`);
+      try {
+        const r = await apiPost(`${BASE}/api/media/${vid}/audios`, token, {
+          file: { filePath },
+          language: lang,
+          label: label,
+          is_default: '0',
+        });
+        console.log('  ->', r.message || r);
+      } catch(e) { console.error('  -> 失败:', e.message); }
+    }
+
+    for (const f of subtitles) {
+      const lang = f.split('-')[1];
+      const cfg = LANGS.find(l => l.code === lang);
+      const label = cfg ? cfg.label : lang;
+      const filePath = path.join(MEDIA, f);
+      console.log(`上传字幕: video=${vid} lang=${lang} label=${label} file=${f}`);
+      try {
+        const r = await apiPost(`${BASE}/api/media/${vid}/subtitles`, token, {
+          file: { filePath },
+          language: lang,
+          label: label,
+          is_default: '0',
+        });
+        console.log('  ->', r.message || r);
+      } catch(e) { console.error('  -> 失败:', e.message); }
     }
   }
-  console.log('\n完成! 打开游戏客户端可看到右上角语言选择栏');
+
+  console.log('\n上传完成！HLS 自动重建中...');
+  // 触发 HLS 重建
+  for (const vid of [63, 64]) {
+    try {
+      const r = await apiPost(`${BASE}/api/videos/${vid}/rebuild-hls`, token, {});
+      console.log(`触发 HLS 重建 video=${vid}:`, r.message || r);
+    } catch(e) { console.error('HLS重建失败:', e.message); }
+  }
 }
-main().catch(e => console.error(e));
+
+main().catch(e => { console.error(e); process.exit(1); });

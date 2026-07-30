@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const pool = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
+const { enqueueHLS } = require('../utils/hls-transcode');
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(ffmpegPath);
@@ -85,7 +86,9 @@ function processQueue() {
       const newStats = fs.statSync(filePath);
       pool.query('UPDATE videos SET file_size=?, transcode_status=? WHERE id=?', [newStats.size, 'done', videoId]).catch(() => {});
     }
-    console.log(`[Transcode] #${videoId} 完成`);
+    console.log(`[Transcode] #${videoId} 完成, 触发 HLS 转码`);
+    // mp4 转码完成后自动触发 HLS 多音轨转码
+    enqueueHLS(videoId);
     isTranscodingNow = false;
     processQueue();
   }).catch(e => {
@@ -288,6 +291,9 @@ router.post('/batch', authorize('admin', 'editor'), upload.array('videos', 50), 
         const videoRecord = { id: result.insertId, title, file_path: filePath };
         videos.push(videoRecord);
 
+        // 批量上传已同步完成 mp4 转码，直接触发 HLS
+        enqueueHLS(result.insertId);
+
         // 如果开启自动创建场景
         if (autoCreateScenes) {
           const [sceneResult] = await pool.query(
@@ -324,12 +330,77 @@ router.post('/batch', authorize('admin', 'editor'), upload.array('videos', 50), 
 // 删除视频
 router.delete('/:id', authorize('admin', 'editor'), async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT file_path FROM videos WHERE id = ?', [req.params.id]);
+    const [rows] = await pool.query('SELECT file_path, hls_dir FROM videos WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: '视频不存在' });
     if (fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
+    // 清理 HLS 切片目录
+    if (rows[0].hls_dir && fs.existsSync(rows[0].hls_dir)) {
+      try { fs.rmSync(rows[0].hls_dir, { recursive: true, force: true }); } catch(e) {}
+    }
     await pool.query('DELETE FROM videos WHERE id = ?', [req.params.id]);
     res.json({ message: '视频已删除' });
   } catch (err) {
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 查询 HLS 转码状态
+router.get('/:id/hls-status', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT hls_status, hls_master_path, hls_dir FROM videos WHERE id = ?', [req.params.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: '视频不存在' });
+    const [audios] = await pool.query(
+      'SELECT id, language, label, hls_status FROM video_audios WHERE video_id = ?', [req.params.id]
+    );
+    const [subs] = await pool.query(
+      'SELECT id, language, label, hls_status FROM video_subtitles WHERE video_id = ?', [req.params.id]
+    );
+    res.json({
+      hls_status: rows[0].hls_status,
+      hls_master_path: rows[0].hls_master_path,
+      audios,
+      subtitles: subs
+    });
+  } catch (err) {
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 手动重建 HLS（一键重建按钮）
+router.post('/:id/rebuild-hls', authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT id, file_path FROM videos WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: '视频不存在' });
+    if (!fs.existsSync(rows[0].file_path)) {
+      return res.status(400).json({ error: '视频源文件不存在，无法重建' });
+    }
+    // 重置音轨/字幕 HLS 状态，强制重建
+    await pool.query('UPDATE video_audios SET hls_status=? WHERE video_id=?', ['none', req.params.id]);
+    await pool.query('UPDATE video_subtitles SET hls_status=? WHERE video_id=?', ['none', req.params.id]);
+    enqueueHLS(parseInt(req.params.id));
+    res.json({ message: 'HLS 重建任务已加入队列', video_id: parseInt(req.params.id) });
+  } catch (err) {
+    console.error('[Videos] 重建 HLS 失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 批量重建 HLS（一键重建所有存量视频）
+router.post('/rebuild-hls-all', authorize('admin'), async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id FROM videos WHERE file_path IS NOT NULL ORDER BY id ASC"
+    );
+    let count = 0;
+    for (const row of rows) {
+      enqueueHLS(row.id);
+      count++;
+    }
+    res.json({ message: `已加入 ${count} 个视频到 HLS 重建队列`, total: count });
+  } catch (err) {
+    console.error('[Videos] 批量重建 HLS 失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });

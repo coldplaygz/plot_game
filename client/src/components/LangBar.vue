@@ -45,7 +45,9 @@ const props = defineProps({
   subtitles: { type: Array, default: () => [] },
   videoEl: { type: Object, default: null },
   currentAudioEl: { type: Object, default: null },
-  isTouchDevice: { type: Boolean, default: false }
+  isTouchDevice: { type: Boolean, default: false },
+  hlsController: { type: Object, default: null },
+  hlsMode: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['update:audioEl', 'update:subSrc'])
@@ -57,6 +59,8 @@ const subOn = ref(false)
 const open = ref(false)
 
 const activeSubSrc = computed(() => {
+  // HLS 模式下字幕内嵌流中，不外挂
+  if (props.hlsMode) return ''
   if (!subOn.value || !props.subtitles?.length) return ''
   const idx = subIdx.value
   if (idx < 0 || idx >= props.subtitles.length) return ''
@@ -69,6 +73,21 @@ let altAudio = null
 let audioCtx = null
 let audioSource = null
 let audioBuffer = null
+let audioReadyPromise = Promise.resolve(false)
+let resolveAudioReady = null
+
+function resetAudioReady() {
+  if (resolveAudioReady) resolveAudioReady(false)
+  audioReadyPromise = new Promise((resolve) => {
+    resolveAudioReady = resolve
+  })
+}
+
+function finishAudioReady(ok = true) {
+  if (!resolveAudioReady) return
+  resolveAudioReady(ok)
+  resolveAudioReady = null
+}
 
 function findIdxByLang(list) {
   if (!list || !list.length) return -1
@@ -82,6 +101,8 @@ function stopAltAudio() {
   if (altAudio) { altAudio.pause(); altAudio.remove(); altAudio = null; }
   if (audioSource) { try { audioSource.stop() } catch(e) {} audioSource = null }
   if (audioCtx) { audioCtx.close(); audioCtx = null; audioBuffer = null }
+  finishAudioReady(false)
+  emit('update:audioEl', null)
   if (props.videoEl) {
     props.videoEl.onplay = null
     props.videoEl.onpause = null
@@ -92,10 +113,13 @@ function stopAltAudio() {
 function applyAudio(audio) {
   stopAltAudio()
   if (!audio || !props.videoEl) return
+  resetAudioReady()
+  const shouldResumeVideo = !props.videoEl.paused
 
   // 移动端：Web Audio API（不与 video 抢占播放权）
   if (props.isTouchDevice) {
-    applyAudioMobile(audio)
+    if (shouldResumeVideo) props.videoEl.pause()
+    applyAudioMobile(audio, shouldResumeVideo)
     return
   }
 
@@ -123,18 +147,28 @@ function applyAudio(audio) {
 
     // 音频已缓存（后续场景）→ 直接播放；未缓存（首个场景）→ 等 canplay
     if (a.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      finishAudioReady(true)
       playAudio()
     } else {
       let fallbackTimer
       const onReady = () => {
         clearTimeout(fallbackTimer)
+        finishAudioReady(true)
         playAudio()
+      }
+      const onError = () => {
+        clearTimeout(fallbackTimer)
+        finishAudioReady(false)
+        props.videoEl.muted = false
       }
       fallbackTimer = setTimeout(() => {
         a.removeEventListener('canplay', onReady)
+        a.removeEventListener('error', onError)
+        finishAudioReady(false)
         props.videoEl.muted = false  // 超时回退默认音轨
       }, 5000)
       a.addEventListener('canplay', onReady, { once: true })
+      a.addEventListener('error', onError, { once: true })
     }
   }
 
@@ -142,11 +176,29 @@ function applyAudio(audio) {
   props.videoEl.onpause = () => a.pause()
   props.videoEl.onseeked = syncAudio
 
+  if (a.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    finishAudioReady(true)
+  } else {
+    const onPreloadReady = () => finishAudioReady(true)
+    const onPreloadError = () => finishAudioReady(false)
+    a.addEventListener('canplay', onPreloadReady, { once: true })
+    a.addEventListener('error', onPreloadError, { once: true })
+  }
+
+  if (shouldResumeVideo) {
+    props.videoEl.pause()
+    waitForCurrentAudioReady().then((ready) => {
+      if (ready && props.videoEl?.paused) {
+        props.videoEl.play().catch(() => {})
+      }
+    })
+  }
+
   if (!props.videoEl.paused) startAltAudio()
   altAudio = a
 }
 
-async function applyAudioMobile(audio) {
+async function applyAudioMobile(audio, shouldResumeVideo = false) {
   // ★ 先同步 emit，确保 playScene 能立即 mute 视频
   emit('update:audioEl', { _webAudio: true })
 
@@ -161,6 +213,7 @@ async function applyAudioMobile(audio) {
     if (!resp.ok) throw new Error('HTTP ' + resp.status)
     const buf = await resp.arrayBuffer()
     audioBuffer = await audioCtx.decodeAudioData(buf)
+    finishAudioReady(true)
 
     const playFrom = (offset) => {
       if (audioSource) { try { audioSource.stop() } catch(e) {} }
@@ -186,14 +239,53 @@ async function applyAudioMobile(audio) {
       if (audioCtx.state === 'suspended') await audioCtx.resume()
       playFrom(props.videoEl.currentTime)
     }
+
+    if (shouldResumeVideo && props.videoEl?.paused && props.videoEl.currentSrc) {
+      props.videoEl.play().catch(() => {})
+    }
   } catch (e) {
     console.warn('[LangBar] 外挂音轨加载失败:', e.message)
     // 回退默认音轨
+    finishAudioReady(false)
     props.videoEl.muted = false
   }
 }
 
+async function waitForCurrentAudioReady(timeout = 5000) {
+  // HLS 模式：音轨在流中，无需等待外挂音轨就绪
+  if (props.hlsMode) return true
+  const hasSelectedAudio = audioIdx.value >= 0 && audioIdx.value < props.audios.length
+  if (!hasSelectedAudio) return false
+
+  if (props.isTouchDevice) {
+    if (audioBuffer) return true
+  } else if (altAudio && altAudio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    return true
+  }
+
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve(false), timeout)
+  })
+
+  return Promise.race([audioReadyPromise, timeoutPromise])
+}
+
 function switchAudio() {
+  // HLS 模式：音轨在流中，用 hls.js 切换
+  if (props.hlsMode && props.hlsController) {
+    if (audioIdx.value >= 0 && audioIdx.value < props.audios.length) {
+      const a = props.audios[audioIdx.value]
+      props.hlsController.setAudioTrackByLang(a.language)
+      localStorage.setItem('plot_game_audio_label', a.label)
+    } else {
+      // 默认音轨：切到 is_default 的那条
+      const def = props.audios.find(a => a.is_default) || props.audios[0]
+      if (def) props.hlsController.setAudioTrackByLang(def.language)
+      localStorage.removeItem('plot_game_audio_label')
+    }
+    return
+  }
+  // 旧外挂音轨模式
   if (audioIdx.value >= 0 && audioIdx.value < props.audios.length) {
     applyAudio(props.audios[audioIdx.value])
     localStorage.setItem('plot_game_audio_label', props.audios[audioIdx.value].label)
@@ -210,6 +302,24 @@ function selectAudio(i) {
 }
 
 function selectSub(i) {
+  // HLS 模式：字幕在流中，用 hls.js 切换
+  if (props.hlsMode && props.hlsController) {
+    if (i < 0) {
+      subOn.value = false
+      props.hlsController.setSubtitleByLang(null)
+      localStorage.removeItem('plot_game_sub_label')
+    } else {
+      subIdx.value = i
+      subOn.value = true
+      const s = props.subtitles[i]
+      if (s) {
+        props.hlsController.setSubtitleByLang(s.language)
+        localStorage.setItem('plot_game_sub_label', s.label)
+      }
+    }
+    return
+  }
+  // 旧外挂字幕模式
   if (i < 0) {
     subOn.value = false
     localStorage.removeItem('plot_game_sub_label')
@@ -239,15 +349,26 @@ watch(() => props.audios, (val, oldVal) => {
         audioIdx.value = findIdxByLang(val)
       }
     }
-    applyAudio(val[audioIdx.value])
-    // 保存当前音轨选择到 localStorage，确保存档时能记录（仅 applyAudio 不写 localStorage）
-    if (audioIdx.value >= 0 && audioIdx.value < val.length) {
-      localStorage.setItem('plot_game_audio_label', val[audioIdx.value].label)
+    if (props.hlsMode) {
+      // HLS 模式：音轨在流中，只设置 hls.js 音轨，不启动外挂
+      // 清理可能残留的外挂音轨（从非 HLS 模式切换过来）
+      stopAltAudio()
+      switchAudio()
+      if (audioIdx.value >= 0 && audioIdx.value < val.length) {
+        localStorage.setItem('plot_game_audio_label', val[audioIdx.value].label)
+      }
+    } else {
+      applyAudio(val[audioIdx.value])
+      if (audioIdx.value >= 0 && audioIdx.value < val.length) {
+        localStorage.setItem('plot_game_audio_label', val[audioIdx.value].label)
+      }
     }
   } else {
     audioIdx.value = -1
-    stopAltAudio()
-    if (props.videoEl) props.videoEl.muted = false
+    if (!props.hlsMode) {
+      stopAltAudio()
+      if (props.videoEl) props.videoEl.muted = false
+    }
   }
 }, { immediate: true })
 
@@ -269,9 +390,16 @@ watch(() => props.subtitles, (val, oldVal) => {
       }
     }
     subOn.value = true
+    // HLS 模式：主动应用字幕到 hls.js
+    if (props.hlsMode && props.hlsController && subIdx.value >= 0) {
+      props.hlsController.setSubtitleByLang(val[subIdx.value].language)
+    }
   } else {
     subIdx.value = -1
     subOn.value = false
+    if (props.hlsMode && props.hlsController) {
+      props.hlsController.setSubtitleByLang(null)
+    }
   }
 }, { immediate: true })
 
@@ -294,4 +422,33 @@ watch(activeSubSrc, (val) => {
 onBeforeUnmount(() => {
   stopAltAudio()
 })
+
+defineExpose({
+  waitForCurrentAudioReady,
+  // 供父组件在 HLS manifest 就绪后重新应用音轨/字幕（解决 watch subtitles 先于 hlsController 赋值触发的时序问题）
+  reapply
+})
+
+function reapply() {
+  console.log('[LangBar] reapply 调用', {
+    hlsMode: props.hlsMode,
+    hasController: !!props.hlsController,
+    audioIdx: audioIdx.value,
+    subOn: subOn.value,
+    subIdx: subIdx.value,
+    audiosLen: props.audios.length,
+    subtitlesLen: props.subtitles.length
+  })
+  if (!props.hlsMode || !props.hlsController) return
+  // 重新应用音轨
+  if (audioIdx.value >= 0 && audioIdx.value < props.audios.length) {
+    props.hlsController.setAudioTrackByLang(props.audios[audioIdx.value].language)
+  }
+  // 重新应用字幕
+  if (subOn.value && subIdx.value >= 0 && subIdx.value < props.subtitles.length) {
+    props.hlsController.setSubtitleByLang(props.subtitles[subIdx.value].language)
+  } else {
+    props.hlsController.setSubtitleByLang(null)
+  }
+}
 </script>
