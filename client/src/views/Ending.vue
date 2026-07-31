@@ -59,7 +59,7 @@ function goLobby() {
 }
 
 function replay() {
-  const gameId = game.currentScene?.game_id
+  const gameId = game.currentGameId
   game.returnToLobby()
   if (gameId) router.push('/play/' + gameId)
   else router.push('/')

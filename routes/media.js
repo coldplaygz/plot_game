@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const pool = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { enqueueHLS, rebuildAudioTrackHLS, removeAudioTrackByLangHLS, addSubtitleHLS, removeSubtitleByLangHLS } = require('../utils/hls-transcode');
+const { enqueueHLS } = require('../utils/hls-transcode');
 
 // ffmpeg for WAV→MP3 conversion
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
@@ -90,10 +90,7 @@ router.post('/:videoId/audios', authorize('admin', 'editor'), upload.single('fil
             fs.unlinkSync(filePath);
             const stats = fs.statSync(mp3Path);
             pool.query('UPDATE video_audios SET file_path=?, file_size=? WHERE id=?', [mp3Path.replace(/\\\\/g, '/'), stats.size, audioId])
-              .then(() => {
-                // MP3 转换完成后触发增量 HLS 重建（只切这一条音轨）
-                rebuildAudioTrackHLS(parseInt(req.params.videoId), audioId);
-              })
+              .then(() => {})
               .catch(() => {});
             console.log('[Media] WAV→MP3 完成 #' + audioId, ((Date.now() - convStart)/1000).toFixed(1) + 's');
           } catch (e) { console.warn('[Media] 替换文件失败:', e.message); }
@@ -102,10 +99,8 @@ router.post('/:videoId/audios', authorize('admin', 'editor'), upload.single('fil
           console.warn('[Media] WAV→MP3 失败 #' + audioId + ':', err.message);
         })
         .run();
-    } else {
-      // 非 WAV：增量切这一条音轨（不重切视频）
-      rebuildAudioTrackHLS(parseInt(req.params.videoId), audioId);
     }
+    // 注意：上传音轨不触发 HLS 重建，需在对话框点击「重建 HLS」按钮统一重建
   } catch (err) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: '服务器内部错误' });
@@ -115,16 +110,14 @@ router.post('/:videoId/audios', authorize('admin', 'editor'), upload.single('fil
 // 删除音轨
 router.delete('/:videoId/audios/:audioId', authorize('admin', 'editor'), async (req, res) => {
   try {
-    // 删除前先查 language，用于清理 HLS 分片
-    const [rows] = await pool.query('SELECT file_path, language FROM video_audios WHERE id = ? AND video_id = ?',
+    // 删除前先查 file_path，用于清理源文件
+    const [rows] = await pool.query('SELECT file_path FROM video_audios WHERE id = ? AND video_id = ?',
       [req.params.audioId, req.params.videoId]);
     if (rows.length === 0) return res.status(404).json({ error: '音轨不存在' });
-    const lang = rows[0].language;
     if (fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
     await pool.query('DELETE FROM video_audios WHERE id = ?', [req.params.audioId]);
     res.json({ message: '音轨已删除' });
-    // 增量：删除该音轨 HLS 分片 + 重生成 master（若删完无外挂音轨则重切视频恢复原音）
-    removeAudioTrackByLangHLS(parseInt(req.params.videoId), lang);
+    // 注意：删除音轨不触发 HLS 重建，需在对话框点击「重建 HLS」按钮统一重建
   } catch (err) {
     res.status(500).json({ error: '服务器内部错误' });
   }
@@ -181,8 +174,7 @@ router.post('/:videoId/subtitles', authorize('admin', 'editor'), upload.single('
       [req.params.videoId, language, label, finalPath, req.file.size, is_default === '1' ? 1 : 0]
     );
     res.status(201).json({ message: '字幕上传成功', subtitle: { id: result.insertId, language, label } });
-    // 增量：只复制该字幕 vtt + 重生成 master（不重切视频/音轨）
-    addSubtitleHLS(parseInt(req.params.videoId), result.insertId);
+    // 注意：上传字幕不触发 HLS 重建，需在对话框点击「重建 HLS」按钮统一重建
   } catch (err) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ error: '服务器内部错误' });
@@ -192,16 +184,14 @@ router.post('/:videoId/subtitles', authorize('admin', 'editor'), upload.single('
 // 删除字幕
 router.delete('/:videoId/subtitles/:subId', authorize('admin', 'editor'), async (req, res) => {
   try {
-    // 删除前先查 language，用于清理 HLS 字幕文件
-    const [rows] = await pool.query('SELECT file_path, language FROM video_subtitles WHERE id = ? AND video_id = ?',
+    // 删除前先查 file_path，用于清理源文件
+    const [rows] = await pool.query('SELECT file_path FROM video_subtitles WHERE id = ? AND video_id = ?',
       [req.params.subId, req.params.videoId]);
     if (rows.length === 0) return res.status(404).json({ error: '字幕不存在' });
-    const lang = rows[0].language;
     if (fs.existsSync(rows[0].file_path)) fs.unlinkSync(rows[0].file_path);
     await pool.query('DELETE FROM video_subtitles WHERE id = ?', [req.params.subId]);
     res.json({ message: '字幕已删除' });
-    // 增量：删除该字幕 vtt + 重生成 master
-    removeSubtitleByLangHLS(parseInt(req.params.videoId), lang);
+    // 注意：删除字幕不触发 HLS 重建，需在对话框点击「重建 HLS」按钮统一重建
   } catch (err) {
     res.status(500).json({ error: '服务器内部错误' });
   }

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HLS 播放对比测试（照搬 hls.js demo 实现）</title>
+  <!-- 照搬 hls.js 官方 demo 的标准实现：仅用 hls.js + 原生 video + 简单控制栏 -->
+  <style>
+    body { background: #0a0a0f; color: #e5e7eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 20px; }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 18px; margin: 0 0 16px; font-weight: 500; }
+    .player-wrap { background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16/9; position: relative; }
+    video { width: 100%; height: 100%; display: block; background: #000; }
+    .controls { background: #111122; padding: 12px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-radius: 8px; margin-top: 12px; }
+    button { background: #7c3aed; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: opacity .2s; }
+    button:hover { opacity: .9; }
+    button:disabled { background: #333; cursor: not-allowed; opacity: .5; }
+    .group { display: flex; align-items: center; gap: 8px; }
+    .group > label { font-size: 12px; color: #9ca3af; min-width: 50px; }
+    select { background: #0a0a0f; color: #e5e7eb; border: 1px solid #1e1e3a; padding: 6px 10px; border-radius: 6px; font-size: 13px; outline: none; }
+    .log { background: #0a0a0f; border: 1px solid #1e1e3a; border-radius: 8px; padding: 12px; margin-top: 12px; font-family: 'Consolas', monospace; font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+    .log-line { margin: 0; line-height: 1.6; }
+    .log-line.info { color: #9ca3af; }
+    .log-line.event { color: #22c55e; }
+    .log-line.error { color: #ef4444; }
+    .url-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+    .url-bar input { flex: 1; background: #0a0a0f; color: #e5e7eb; border: 1px solid #1e1e3a; padding: 8px 12px; border-radius: 6px; font-size: 13px; outline: none; }
+    .hint { font-size: 12px; color: #6b7280; margin-top: 8px; line-height: 1.6; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-left: 6px; }
+    .badge.on { background: rgba(34,197,94,.15); color: #22c55e; border: 1px solid rgba(34,197,94,.3); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>HLS 播放对比测试 <span style="font-size:12px;color:#6b7280;font-weight:400">（照搬 hls.js demo 标准实现）</span></h1>
+
+    <!-- URL 输入：默认指向视频65的 master.m3u8 -->
+    <div class="url-bar">
+      <input id="urlInput" value="/uploads/videos/65_hls/master.m3u8" placeholder="master.m3u8 URL" />
+      <button id="loadBtn">加载</button>
+    </div>
+
+    <div class="player-wrap">
+      <video id="video" playsinline></video>
+    </div>
+
+    <!-- 控制栏：照搬 demo 的 play/pause + 音轨/字幕下拉 -->
+    <div class="controls">
+      <button id="playBtn">▶ 播放</button>
+      <div class="group">
+        <label>音轨</label>
+        <select id="audioTrackSel"><option value="-1">--</option></select>
+      </div>
+      <div class="group">
+        <label>字幕</label>
+        <select id="subtitleSel"><option value="-1">关闭</option></select>
+      </div>
+      <div class="group">
+        <label>音量</label>
+        <input id="volume" type="range" min="0" max="1" step="0.01" value="1" style="width:80px" />
+      </div>
+    </div>
+
+    <div class="log" id="log"></div>
+    <div class="hint">
+      说明：此页面完全照搬 hls.js 官方 demo 的标准实现（new Hls + loadSource + attachMedia + hls.audioTrack / hls.subtitleTrack）。<br/>
+      若此页面切换音轨正常而 /play/4 有问题，说明差异在项目封装层；若此页面也有问题，说明差异在 m3u8 内容或 hls.js 版本。
+    </div>
+  </div>
+
+  <!-- 引用本地 hls.js（与项目实际使用的版本一致） -->
+  <script src="/hls.js/hls.min.js"></script>
+  <script>
+    // ═══════════════════════════════════════════════════════════════
+    // 照搬 hls.js demo 的标准实现
+    // 参考：https://hlsjs.video-dev.org/demo/
+    // ═══════════════════════════════════════════════════════════════
+    const logEl = document.getElementById('log');
+    function log(msg, type = 'info') {
+      const line = document.createElement('p');
+      line.className = 'log-line ' + type;
+      line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log('[HLS-Test]', msg);
+    }
+
+    const video = document.getElementById('video');
+    const urlInput = document.getElementById('urlInput');
+    const loadBtn = document.getElementById('loadBtn');
+    const playBtn = document.getElementById('playBtn');
+    const audioTrackSel = document.getElementById('audioTrackSel');
+    const subtitleSel = document.getElementById('subtitleSel');
+    const volumeInput = document.getElementById('volume');
+
+    let hls = null;
+
+    function buildOption(text, value) {
+      const opt = document.createElement('option');
+      opt.value = String(value);
+      opt.textContent = text;
+      return opt;
+    }
+
+    // 填充音轨下拉（照搬 demo）
+    function updateAudioTracks() {
+      audioTrackSel.innerHTML = '';
+      const tracks = hls.audioTracks || [];
+      tracks.forEach((t) => {
+        audioTrackSel.appendChild(buildOption(t.name || t.lang || ('#' + t.id), t.id));
+      });
+      audioTrackSel.value = String(hls.audioTrack);
+      log('音轨列表就绪: ' + tracks.map(t => t.lang + '(' + t.id + ')').join(', '), 'event');
+    }
+
+    // 填充字幕下拉（照搬 demo）
+    function updateSubtitleTracks() {
+      subtitleSel.innerHTML = '';
+      subtitleSel.appendChild(buildOption('关闭', -1));
+      const tracks = hls.subtitleTracks || [];
+      tracks.forEach((t) => {
+        subtitleSel.appendChild(buildOption(t.name || t.lang || ('#' + t.id), t.id));
+      });
+      subtitleSel.value = String(hls.subtitleTrack);
+      log('字幕列表就绪: ' + tracks.map(t => t.lang + '(' + t.id + ')').join(', '), 'event');
+    }
+
+    // 加载 m3u8（照搬 demo 的核心 4 行）
+    function loadStream(url) {
+      if (hls) { hls.destroy(); hls = null; }
+      log('加载: ' + url);
+
+      // Safari 原生支持
+      if (video.canPlayType('application/vnd.apple.mpegurl') && !Hls.isSupported()) {
+        video.src = url;
+        log('使用原生 HLS（Safari）', 'event');
+        return;
+      }
+
+      // 标准 hls.js 初始化
+      hls = new Hls({
+        lowLatencyMode: false,
+        enableWebVTT: true,
+        renderTextTracksNatively: true
+      });
+      hls.loadSource(url);
+      hls.attachMedia(video);
+
+      // manifest 解析完成：填充下拉
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        log('MANIFEST_PARSED', 'event');
+        updateAudioTracks();
+        updateSubtitleTracks();
+      });
+
+      // 音轨/字幕列表更新（异步场景）
+      hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, updateAudioTracks);
+      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, updateSubtitleTracks);
+
+      // 音轨切换事件日志
+      hls.on(Hls.Events.AUDIO_TRACK_SWITCHED, (_evt, data) => {
+        log('AUDIO_TRACK_SWITCHED → id=' + data.id, 'event');
+      });
+
+      // 错误日志
+      hls.on(Hls.Events.ERROR, (_evt, data) => {
+        log('ERROR: ' + data.type + ' / ' + data.details + (data.fatal ? ' (fatal)' : ''), 'error');
+      });
+    }
+
+    // ─── 控制栏事件 ───
+    playBtn.addEventListener('click', () => {
+      if (video.paused) { video.play(); playBtn.textContent = '⏸ 暂停'; }
+      else { video.pause(); playBtn.textContent = '▶ 播放'; }
+    });
+
+    audioTrackSel.addEventListener('change', () => {
+      const id = parseInt(audioTrackSel.value);
+      log('切换音轨 → id=' + id);
+      hls.audioTrack = id;  // ← 这就是 demo 的标准切换方式
+    });
+
+    subtitleSel.addEventListener('change', () => {
+      const id = parseInt(subtitleSel.value);
+      log('切换字幕 → id=' + id);
+      hls.subtitleTrack = id;  // ← demo 标准切换
+    });
+
+    volumeInput.addEventListener('input', () => {
+      video.volume = parseFloat(volumeInput.value);
+      video.muted = video.volume === 0;
+    });
+
+    video.addEventListener('volumechange', () => {
+      playBtn.textContent = video.paused ? '▶ 播放' : '⏸ 暂停';
+    });
+    video.addEventListener('play', () => { playBtn.textContent = '⏸ 暂停'; });
+    video.addEventListener('pause', () => { playBtn.textContent = '▶ 播放'; });
+
+    loadBtn.addEventListener('click', () => loadStream(urlInput.value.trim()));
+
+    // 初始加载
+    loadStream(urlInput.value);
+  </script>
+</body>
+</html>

@@ -68,15 +68,6 @@
       <div v-if="batchErrors.length" class="mt-2 space-y-1">
         <div v-for="(err, i) in batchErrors" :key="i" class="p-2 bg-[#1a0a0a] border border-[#ef4444]/30 rounded text-xs text-[#ef4444]">{{ err }}</div>
       </div>
-      <!-- 一键重建所有存量视频的 HLS -->
-      <div class="mt-3 pt-3 border-t border-border-dim flex items-center gap-3">
-        <button
-          class="inline-flex items-center gap-1.5 px-4 py-2 bg-[#7c3aed] text-white border-none rounded-lg text-sm cursor-pointer hover:bg-[#6d28d9] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          :disabled="rebuildingAll"
-          @click="rebuildAllHls"
-        >{{ rebuildingAll ? '排队中...' : '🔧 一键重建所有 HLS' }}</button>
-        <span class="text-xs text-text-dim">将所有视频加入 HLS 多音轨转码队列（含音轨/字幕打包）</span>
-      </div>
     </div>
 
     <!-- Table -->
@@ -124,6 +115,7 @@
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ formatDate(v.created_at) }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#059669] text-white hover:bg-[#047857]" @click="playVideo(v)">▶</button>
+            <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="editVideo(v)" title="编辑视频信息">✏️</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="manageMedia(v)">🎵字幕</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="replaceVideo(v)">🔄</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#7c3aed] text-white hover:bg-[#6d28d9] ml-1" @click="rebuildHls(v)" title="重建 HLS 多音轨流">HLS</button>
@@ -253,16 +245,70 @@
         </div>
       </div>
 
+      <!-- 上传进度条 -->
+      <div v-if="mediaUploading || mediaUploadText" class="mt-3 px-1">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs text-text-dim truncate flex-1">{{ mediaUploadText }}</span>
+        </div>
+        <div v-if="mediaUploading" class="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+          <div class="h-full bg-gradient-to-r from-brand-purple to-brand-pink rounded-full transition-[width] duration-200" :style="{ width: mediaUploadPercent + '%' }"></div>
+        </div>
+      </div>
+
       <template #actions>
-        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple" @click="refreshMedia">刷新</button>
-        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple" @click="mediaModalVisible = false">关闭</button>
+        <!-- 左侧：HLS 重建按钮 + 进度 -->
+        <div class="flex items-center gap-3 flex-1 min-w-0">
+          <button
+            class="inline-flex items-center gap-[5px] px-[14px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 shrink-0"
+            :class="(hlsRebuilding || mediaUploading)
+              ? 'bg-surface-darkest text-text-dim cursor-not-allowed'
+              : 'bg-gradient-to-r from-brand-purple to-brand-pink text-white hover:opacity-90'"
+            :disabled="hlsRebuilding || mediaUploading"
+            :title="mediaUploading ? '请等待上传完成' : ''"
+            @click="rebuildHlsFromMedia"
+          >
+            <svg v-if="hlsRebuilding" class="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <span>{{ hlsRebuilding ? '重建中...' : (mediaUploading ? '上传中...' : '🔄 重建 HLS') }}</span>
+          </button>
+          <span v-if="hlsProgressText" class="text-xs text-text-dim truncate">{{ hlsProgressText }}</span>
+        </div>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple shrink-0" @click="refreshMedia">刷新</button>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple shrink-0" @click="closeMediaModal">关闭</button>
+      </template>
+    </AppModal>
+
+    <!-- Edit Video Modal -->
+    <AppModal
+      :visible="editModalVisible"
+      :title="'✏️ 编辑视频 - ' + (editForm.title || '')"
+      @close="editModalVisible = false"
+    >
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">视频标题 *</label>
+        <input v-model="editForm.title" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">归属游戏</label>
+        <select v-model="editForm.game_id" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple">
+          <option :value="null">— 不归属游戏 —</option>
+          <option v-for="g in games" :key="g.id" :value="g.id">{{ g.title }}</option>
+        </select>
+        <p class="text-[11px] text-text-dimmer mt-1">修改归属游戏会同步更新该视频关联场景的归属。</p>
+      </div>
+
+      <template #actions>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-brand-purple text-white hover:bg-brand-purple-dark" @click="saveEditVideo">保存</button>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple" @click="editModalVisible = false">取消</button>
       </template>
     </AppModal>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 import { useApi } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
@@ -270,7 +316,7 @@ import AppPagination from '../components/AppPagination.vue'
 import VideoPlayerModal from '../components/VideoPlayerModal.vue'
 import AppModal from '../components/AppModal.vue'
 
-const { get, post, del, upload } = useApi()
+const { get, post, put, del, upload } = useApi()
 const { show } = useToast()
 
 // Data
@@ -319,6 +365,84 @@ const audioLang = ref('zh')
 const audioLabel = ref('')
 const audioDefault = ref(false)
 const audioFileInput = ref(null)
+
+// HLS 重建进度（音轨字幕对话框内的按钮）
+const hlsRebuilding = ref(false)
+const hlsProgressText = ref('')
+let hlsProgressTimer = null
+
+// 音轨/字幕上传进度
+const mediaUploading = ref(false)
+const mediaUploadPercent = ref(0)
+const mediaUploadText = ref('')
+
+// 列表状态响应式轮询（transcode_status + hls_status）
+// 仅对处于 queued/transcoding 状态的视频定期拉取最新状态，无进行中任务时自动停止
+let statusPollTimer = null
+const STATUS_POLL_INTERVAL = 3000
+const IN_PROGRESS_STATES = ['queued', 'transcoding']
+
+function hasInProgressVideos() {
+  return videos.value.some(v =>
+    IN_PROGRESS_STATES.includes(v.transcode_status) ||
+    IN_PROGRESS_STATES.includes(v.hls_status)
+  )
+}
+
+function startStatusPolling() {
+  if (statusPollTimer) return
+  statusPollTimer = setInterval(pollInProgressStatuses, STATUS_POLL_INTERVAL)
+  console.log('[StatusPoll] 启动列表状态轮询')
+}
+
+function stopStatusPolling() {
+  if (!statusPollTimer) return
+  clearInterval(statusPollTimer)
+  statusPollTimer = null
+  console.log('[StatusPoll] 停止列表状态轮询')
+}
+
+async function pollInProgressStatuses() {
+  // 收集所有进行中的视频
+  const pending = videos.value.filter(v =>
+    IN_PROGRESS_STATES.includes(v.transcode_status) ||
+    IN_PROGRESS_STATES.includes(v.hls_status)
+  )
+
+  if (pending.length === 0) {
+    // 没有进行中的任务，停止轮询
+    stopStatusPolling()
+    return
+  }
+
+  // 并行拉取每个进行中视频的最新状态
+  await Promise.all(pending.map(async (v) => {
+    try {
+      const res = await get('/videos/' + v.id + '/hls-status')
+      // 直接更新数组中对应项的属性，触发响应式渲染
+      const target = videos.value.find(x => x.id === v.id)
+      if (!target) return
+      if (res.transcode_status !== undefined && target.transcode_status !== res.transcode_status) {
+        target.transcode_status = res.transcode_status
+      }
+      if (res.hls_status !== undefined && target.hls_status !== res.hls_status) {
+        target.hls_status = res.hls_status
+        // HLS 状态刚变为 done/failed 时，同步刷新缓存
+        if (res.hls_status === 'done' || res.hls_status === 'failed') {
+          videoCache.value[v.id] = { ...target }
+        }
+      }
+    } catch (e) {
+      // 单个视频查询失败不中断其他轮询
+      console.warn('[StatusPoll] 查询 #' + v.id + ' 状态失败:', e.message)
+    }
+  }))
+}
+
+// Edit Video
+const editModalVisible = ref(false)
+const editVideoId = ref(null)
+const editForm = ref({ title: '', game_id: null })
 const subLang = ref('zh')
 const subLabel = ref('')
 const subDefault = ref(false)
@@ -364,6 +488,12 @@ async function loadVideos() {
     const cache = {}
     videos.value.forEach(v => { cache[v.id] = v })
     videoCache.value = cache
+    // 加载后若有进行中的任务，启动状态轮询；否则停止
+    if (hasInProgressVideos()) {
+      startStatusPolling()
+    } else {
+      stopStatusPolling()
+    }
   } catch (e) {
     show('加载视频失败: ' + e.message)
   }
@@ -523,16 +653,125 @@ async function deleteVideo(id) {
   }
 }
 
+// 编辑视频元数据（标题、归属游戏）
+function editVideo(v) {
+  editVideoId.value = v.id
+  editForm.value = {
+    title: v.title || '',
+    game_id: v.game_id || null
+  }
+  editModalVisible.value = true
+}
+
+async function saveEditVideo() {
+  if (!editForm.value.title.trim()) return show('标题不能为空')
+  try {
+    await put('/videos/' + editVideoId.value, {
+      title: editForm.value.title.trim(),
+      game_id: editForm.value.game_id || null
+    })
+    show('更新成功')
+    editModalVisible.value = false
+    loadVideos()
+  } catch (e) {
+    show('更新失败: ' + (e.message || '未知错误'))
+  }
+}
+
 // 重建单个视频的 HLS 多音轨流
 async function rebuildHls(v) {
   if (!confirm(`确定重建视频 "${v.title}" 的 HLS 多音轨流？\n（将重新切片视频/音轨/字幕）`)) return
   try {
     await post('/videos/' + v.id + '/rebuild-hls')
     show('HLS 重建任务已加入队列')
-    loadVideos()
+    // 乐观更新：立即将本地状态置为 queued，触发 UI 响应
+    v.hls_status = 'queued'
+    startStatusPolling()
   } catch (e) {
     show('HLS 重建失败: ' + (e.message || '未知错误'))
   }
+}
+
+// 音轨字幕对话框内：触发 HLS 重建 + 轮询进度
+async function rebuildHlsFromMedia() {
+  if (!mediaVideo.value || hlsRebuilding.value || mediaUploading.value) return
+  const v = mediaVideo.value
+  if (!confirm(`确定重建 "${v.title}" 的 HLS？\n（音轨+字幕已配置完成后点击，将重新切片视频/音轨/字幕）`)) return
+
+  hlsRebuilding.value = true
+  hlsProgressText.value = '提交重建任务...'
+
+  try {
+    await post('/videos/' + v.id + '/rebuild-hls')
+    hlsProgressText.value = '已加入队列，等待转码...'
+    // 乐观更新列表中对应视频的状态，并启动列表轮询（关闭对话框后仍能继续更新）
+    const target = videos.value.find(x => x.id === v.id)
+    if (target) target.hls_status = 'queued'
+    startStatusPolling()
+    // 启动对话框内进度轮询
+    startHlsProgressPolling(v.id)
+  } catch (e) {
+    hlsRebuilding.value = false
+    hlsProgressText.value = ''
+    show('HLS 重建失败: ' + (e.message || '未知错误'))
+  }
+}
+
+// 轮询 HLS 转码进度
+function startHlsProgressPolling(videoId) {
+  if (hlsProgressTimer) clearInterval(hlsProgressTimer)
+
+  hlsProgressTimer = setInterval(async () => {
+    try {
+      const res = await get('/videos/' + videoId + '/hls-status')
+      const status = res.hls_status
+      const audioStatuses = (res.audios || []).map(a => a.hls_status)
+      const subStatuses = (res.subtitles || []).map(s => s.hls_status)
+
+      // 状态文本
+      if (status === 'queued') {
+        hlsProgressText.value = '排队中...'
+      } else if (status === 'transcoding') {
+        const audioDone = audioStatuses.filter(s => s === 'done').length
+        const audioTotal = audioStatuses.length
+        const subDone = subStatuses.filter(s => s === 'done').length
+        const subTotal = subStatuses.length
+        hlsProgressText.value = `转码中... 视频/音轨 ${audioDone}/${audioTotal} 字幕 ${subDone}/${subTotal}`
+      } else if (status === 'done') {
+        hlsProgressText.value = '✅ 重建完成'
+        hlsRebuilding.value = false
+        clearInterval(hlsProgressTimer)
+        hlsProgressTimer = null
+        // 刷新音轨/字幕列表（hls_status 已更新）+ 视频列表
+        refreshMedia()
+        loadVideos()
+        setTimeout(() => { hlsProgressText.value = '' }, 3000)
+      } else if (status === 'failed') {
+        hlsProgressText.value = '❌ 重建失败'
+        hlsRebuilding.value = false
+        clearInterval(hlsProgressTimer)
+        hlsProgressTimer = null
+        show('HLS 重建失败，请检查服务器日志')
+      }
+    } catch (e) {
+      // 轮询出错不停止，继续尝试
+      console.warn('轮询 HLS 状态失败:', e)
+    }
+  }, 2000)
+}
+
+// 关闭音轨字幕对话框时清理（仅清理对话框内轮询，列表状态轮询独立运行）
+function closeMediaModal() {
+  if (hlsProgressTimer) {
+    clearInterval(hlsProgressTimer)
+    hlsProgressTimer = null
+  }
+  hlsRebuilding.value = false
+  hlsProgressText.value = ''
+  mediaUploading.value = false
+  mediaUploadPercent.value = 0
+  mediaUploadText.value = ''
+  mediaModalVisible.value = false
 }
 
 // 一键重建所有存量视频的 HLS
@@ -546,7 +785,9 @@ async function rebuildAllHls() {
   try {
     const res = await post('/videos/rebuild-hls-all')
     show(`已加入 ${res.total} 个视频到 HLS 重建队列`)
-    loadVideos()
+    // 乐观更新所有视频为 queued，启动列表轮询
+    videos.value.forEach(v => { v.hls_status = 'queued' })
+    startStatusPolling()
   } catch (e) {
     show('批量重建失败: ' + (e.message || '未知错误'))
   } finally {
@@ -613,10 +854,54 @@ async function uploadMediaItem(type) {
 
   const url = '/media/' + mediaVideo.value.id + '/' + (type === 'audio' ? 'audios' : 'subtitles')
 
-  uploadWithXHR(url, fd, () => {
-    show('上传成功')
-    refreshMedia()
-  })
+  // 独立 XHR 带进度显示
+  mediaUploading.value = true
+  mediaUploadPercent.value = 0
+  mediaUploadText.value = `上传${type === 'audio' ? '音轨' : '字幕'}: ${file.name} (0%)`
+
+  const token = localStorage.getItem('plot_game_token')
+  const xhr = new XMLHttpRequest()
+  xhr.open('POST', '/api' + url)
+  if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token)
+
+  xhr.upload.onprogress = (e) => {
+    if (e.lengthComputable) {
+      const pct = Math.round((e.loaded / e.total) * 100)
+      mediaUploadPercent.value = pct
+      mediaUploadText.value = `上传${type === 'audio' ? '音轨' : '字幕'}: ${file.name} (${pct}% - ${(e.loaded / 1024 / 1024).toFixed(1)}/${(e.total / 1024 / 1024).toFixed(1)}MB)`
+    }
+  }
+
+  xhr.onload = () => {
+    mediaUploading.value = false
+    mediaUploadPercent.value = 0
+    try {
+      const r = JSON.parse(xhr.responseText)
+      if (r.error) {
+        mediaUploadText.value = ''
+        show('上传失败: ' + r.error)
+        return
+      }
+      mediaUploadText.value = `✅ ${type === 'audio' ? '音轨' : '字幕'}上传完成，需点击「重建 HLS」生效`
+      // 清空文件选择框
+      if (fileInput.value) fileInput.value.value = ''
+      refreshMedia()
+      // 3秒后清空提示
+      setTimeout(() => { mediaUploadText.value = '' }, 3000)
+    } catch (e) {
+      mediaUploadText.value = ''
+      show('响应解析失败')
+    }
+  }
+
+  xhr.onerror = () => {
+    mediaUploading.value = false
+    mediaUploadPercent.value = 0
+    mediaUploadText.value = ''
+    show('网络错误')
+  }
+
+  xhr.send(fd)
 }
 
 async function deleteMediaItem(type, id) {
@@ -625,7 +910,7 @@ async function deleteMediaItem(type, id) {
   const url = '/media/' + mediaVideo.value.id + '/' + (type === 'audio' ? 'audios' : 'subtitles') + '/' + id
   try {
     await del(url)
-    show('已删除')
+    show(type === 'audio' ? '音轨已删除，需点击「重建 HLS」生效' : '字幕已删除，需点击「重建 HLS」生效')
     refreshMedia()
   } catch (e) {
     show('删除失败: ' + e.message)
@@ -635,5 +920,14 @@ async function deleteMediaItem(type, id) {
 onMounted(() => {
   loadVideos()
   loadGames()
+})
+
+// 组件卸载时清理所有定时器，避免内存泄漏
+onUnmounted(() => {
+  stopStatusPolling()
+  if (hlsProgressTimer) {
+    clearInterval(hlsProgressTimer)
+    hlsProgressTimer = null
+  }
 })
 </script>

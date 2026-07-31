@@ -275,6 +275,7 @@ function switchAudio() {
   if (props.hlsMode && props.hlsController) {
     if (audioIdx.value >= 0 && audioIdx.value < props.audios.length) {
       const a = props.audios[audioIdx.value]
+      console.log('[LangBar] HLS switchAudio lang=', a.language, 'label=', a.label, 'hlsController=', !!props.hlsController)
       props.hlsController.setAudioTrackByLang(a.language)
       localStorage.setItem('plot_game_audio_label', a.label)
     } else {
@@ -426,10 +427,12 @@ onBeforeUnmount(() => {
 defineExpose({
   waitForCurrentAudioReady,
   // 供父组件在 HLS manifest 就绪后重新应用音轨/字幕（解决 watch subtitles 先于 hlsController 赋值触发的时序问题）
-  reapply
+  reapply,
+  // 供父组件在视频 ended 时停止外挂音轨（防止音轨比视频长，视频结束后音轨还在播放）
+  stopAltAudio
 })
 
-function reapply() {
+async function reapply() {
   console.log('[LangBar] reapply 调用', {
     hlsMode: props.hlsMode,
     hasController: !!props.hlsController,
@@ -442,13 +445,13 @@ function reapply() {
   if (!props.hlsMode || !props.hlsController) return
   // 重新应用音轨
   if (audioIdx.value >= 0 && audioIdx.value < props.audios.length) {
-    props.hlsController.setAudioTrackByLang(props.audios[audioIdx.value].language)
+    await props.hlsController.setAudioTrackByLang(props.audios[audioIdx.value].language)
   }
   // 重新应用字幕
   if (subOn.value && subIdx.value >= 0 && subIdx.value < props.subtitles.length) {
-    props.hlsController.setSubtitleByLang(props.subtitles[subIdx.value].language)
+    await props.hlsController.setSubtitleByLang(props.subtitles[subIdx.value].language)
   } else {
-    props.hlsController.setSubtitleByLang(null)
+    await props.hlsController.setSubtitleByLang(null)
   }
 }
 </script>

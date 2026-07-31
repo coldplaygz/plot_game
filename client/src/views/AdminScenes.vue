@@ -89,7 +89,14 @@
         </div>
       </div>
       <div class="mb-[14px]">
-        <label class="block text-xs text-text-dim mb-1">关联视频 *</label>
+        <label class="block text-xs text-text-dim mb-1">归属游戏 * <span class="text-text-dimmer">(切换会重新过滤视频列表)</span></label>
+        <select v-model="sceneForm.game_id" @change="onSceneGameIdChange" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple">
+          <option :value="null">— 不归属游戏 —</option>
+          <option v-for="g in games" :key="g.id" :value="g.id">{{ g.title }}</option>
+        </select>
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">关联视频 * <span v-if="modalGameId" class="text-text-dimmer">(仅显示该场景所属游戏的视频)</span></label>
         <select v-model="sceneForm.video_id" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple">
           <option :value="null">--选择视频--</option>
           <option v-for="v in videoList" :key="v.id" :value="v.id">{{ v.title }} ({{ v.filename }})</option>
@@ -202,7 +209,7 @@
         </div>
       </div>
       <div class="mb-[14px]">
-        <label class="block text-xs text-text-dim mb-1">跳转场景</label>
+        <label class="block text-xs text-text-dim mb-1">跳转场景 <span class="text-text-dimmer">(仅显示同游戏的场景)</span></label>
         <select v-model="choiceForm.next_scene_id" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple">
           <option :value="null">无(停留)</option>
           <option v-for="s in allScenes" :key="s.id" :value="s.id">{{ s.title }}</option>
@@ -249,6 +256,8 @@ const scenes = ref([])
 const page = ref(1)
 const pageSize = ref(10)
 const filterGameId = ref(null)
+// 当前打开的场景弹窗所用的 game_id（编辑时取场景自身，新建时取 filterGameId）
+const modalGameId = ref(null)
 const games = ref([])
 
 const pageScenes = computed(() => {
@@ -271,6 +280,7 @@ const endingList = ref([])
 function getEmptySceneForm() {
   return {
     title: '', description: '', video_id: null, chapter: '',
+    game_id: null,
     is_start: false, is_ending: false, ending_id: null,
     choice_timer: 10, choice_delay: 0,
     title_en: '', title_ja: '', title_ko: '',
@@ -278,12 +288,55 @@ function getEmptySceneForm() {
   }
 }
 
+// 按指定 game_id 加载视频列表（game_id 改变时调用）
+async function loadVideosByGame(gameId) {
+  try {
+    const params = { limit: 200 }
+    if (gameId) params.game_id = gameId
+    const r = await get('/videos', params)
+    videoList.value = r.videos || []
+    if (!gameId) {
+      show('提示：未归属游戏，视频列表包含全部视频，请确认引用正确')
+    }
+  } catch (e) {}
+}
+
+// 记录当前生效的 game_id（用于 @change 确认/取消时恢复）
+let lastSceneGameId = null
+
+// 场景表单 game_id 改变时：若已有视频关联，弹确认框，确认后清空 video_id 并重新加载视频列表
+async function onSceneGameIdChange() {
+  const newGameId = sceneForm.value.game_id || null
+
+  // game_id 没变化，直接返回
+  if (newGameId === lastSceneGameId) return
+
+  // 若已关联视频，切换游戏会导致原视频被清除，需用户确认
+  if (sceneForm.value.video_id) {
+    const ok = confirm('修改归属游戏将清除当前关联的视频，确定要切换吗？')
+    if (!ok) {
+      // 取消：恢复 game_id 为原值
+      sceneForm.value.game_id = lastSceneGameId
+      return
+    }
+    // 确认：清除 video_id
+    sceneForm.value.video_id = null
+    show('已清除原关联视频，请重新选择')
+  }
+
+  lastSceneGameId = newGameId
+  modalGameId.value = newGameId
+  await loadVideosByGame(newGameId)
+}
+
 async function openSceneModal(id) {
   editingSceneId.value = id
+  let sceneGameId = null
   if (id > 0) {
     try {
       const r = await get('/scenes/' + id)
       const s = r.scene || {}
+      sceneGameId = s.game_id || null
       let i18n = {}, descI18n = {}
       try { i18n = JSON.parse(s.title_i18n || '{}') } catch {}
       try { descI18n = JSON.parse(s.description_i18n || '{}') } catch {}
@@ -292,6 +345,7 @@ async function openSceneModal(id) {
         description: s.description || '',
         video_id: s.video_id || null,
         chapter: s.chapter || '',
+        game_id: s.game_id || null,
         is_start: !!s.is_start,
         is_ending: !!s.is_ending,
         ending_id: s.ending_id || null,
@@ -310,14 +364,16 @@ async function openSceneModal(id) {
     }
   } else {
     sceneForm.value = getEmptySceneForm()
+    sceneGameId = filterGameId.value || null
+    sceneForm.value.game_id = sceneGameId
   }
+  modalGameId.value = sceneGameId
+  // 记录初始 game_id，供 onSceneGameIdChange 确认/取消时比对恢复
+  lastSceneGameId = sceneGameId
 
-  // Load references
-  try {
-    const [vr, er] = await Promise.all([get('/videos', { limit: 200 }), get('/endings')])
-    videoList.value = vr.videos || []
-    endingList.value = er.endings || []
-  } catch (e) { /* ignore */ }
+  // 加载视频列表 + 结局列表
+  await loadVideosByGame(sceneGameId)
+  try { const r = await get('/endings'); endingList.value = r.endings || [] } catch (e) {}
 
   sceneModalVisible.value = true
 }
@@ -328,6 +384,7 @@ async function saveScene() {
     description: sceneForm.value.description,
     video_id: sceneForm.value.video_id ? parseInt(sceneForm.value.video_id) : null,
     chapter: sceneForm.value.chapter,
+    game_id: sceneForm.value.game_id || null,
     is_start: sceneForm.value.is_start,
     is_ending: sceneForm.value.is_ending,
     ending_id: sceneForm.value.ending_id ? parseInt(sceneForm.value.ending_id) : null,
@@ -393,7 +450,14 @@ async function openChoicesModal(sceneId) {
     ])
     choicesSceneTitle.value = sr.scene?.title || ''
     choices.value = cr.choices || []
-    allScenes.value = await get('/scenes').then(r => r.scenes || []).catch(() => [])
+    // 按当前场景的 game_id 过滤跳转场景列表，避免跨游戏引用
+    const sceneGameId = sr.scene?.game_id || null
+    const params = {}
+    if (sceneGameId) params.game_id = sceneGameId
+    allScenes.value = await get('/scenes', params).then(r => r.scenes || []).catch(() => [])
+    if (!sceneGameId) {
+      show('提示：该场景未归属游戏，跳转场景列表包含全部场景，请确认引用正确')
+    }
   } catch (e) {
     show('加载选项失败')
     return

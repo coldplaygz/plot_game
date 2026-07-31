@@ -80,8 +80,17 @@ app.use(express.static(path.join(__dirname, 'client/dist'), {
     }
   }
 }));
+
+// HLS 对比测试页（照搬 hls.js demo 实现，用于对比验证音轨切换）
+app.get('/hls-test', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public/hls-test.html'));
+});
+// 暴露 hls.js dist 目录供测试页引用
+app.use('/hls.js', express.static(path.join(__dirname, 'client/node_modules/hls.js/dist')));
+
 // SPA fallback — 所有非 /api 非 /uploads 的路径返回 Vue index.html
-app.get(/^(?!\/(api|uploads))/, (req, res) => {
+app.get(/^(?!\/(api|uploads|hls-test|hls\.js))/, (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(__dirname, 'client/dist/index.html'));
 });

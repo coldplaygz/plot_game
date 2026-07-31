@@ -3,6 +3,10 @@
  * - Safari/iOS：原生 video.src = m3u8
  * - 其他浏览器：hls.js
  *
+ * 独立音轨模式：video.m3u8 的 ts 分片为纯视频（无内嵌音频）
+ * 每条音轨独立切片，master.m3u8 通过 URI 引用
+ * hls.js 切换 audioTrack 时自动清理旧 audio buffer 并加载新音轨
+ *
  * 用法：
  *   const { dispose } = attachHls(videoEl, masterUrl)
  *   // 切换音轨/字幕：通过返回的 controller
@@ -95,11 +99,11 @@ export function attachHls(videoEl, url) {
     }
   }
 
-  // 其他浏览器用 hls.js
+  // ═══════════════════════════════════════════════════════════════
+  // hls.js 路径（独立音轨模式：切换 audioTrack 前需 flush 旧 audio buffer）
+  // ═══════════════════════════════════════════════════════════════
   const hls = new Hls({
-    // 启用低延迟模式（可选）
     lowLatencyMode: false,
-    // 允许跨域字幕加载
     enableWebVTT: true,
     // 保持原生渲染：hls.js 会创建 textTrack 并触发 cuechange
     // 我们用 CSS ::cue 把原生字幕隐藏（透明），自己渲染到 DOM 控制位置和字体
@@ -110,30 +114,129 @@ export function attachHls(videoEl, url) {
   hls.loadSource(url)
   hls.attachMedia(videoEl)
 
+  // ─── 状态 ───
   // 缓存待应用的音轨/字幕 lang（manifest 解析前可能被调用，解析后自动应用）
   let pendingAudioLang = null
   let pendingSubLang = null
 
-  const applyAudio = (lang) => {
-    if (!hls.audioTracks || hls.audioTracks.length === 0) {
-      console.log('[HLS] applyAudio 缓存 pending（audioTracks 为空）:', lang)
-      pendingAudioLang = lang
-      return
-    }
-    if (!lang) return
-    const track = hls.audioTracks.find(t => t.lang === lang)
-    if (track) {
-      hls.audioTrack = track.id
-      console.log('[HLS] 切换音轨:', lang, '→', track.name || track.lang || ('#' + track.id))
+  // ─── 字幕文本回调（cuechange → 外部渲染） ───
+  let cueChangeCallback = null
+  let activeTextTrack = null
+  let cleanupTextTrackWait = null
+  const onCueChange = () => {
+    if (!cueChangeCallback || !activeTextTrack) return
+    const activeCues = activeTextTrack.activeCues
+    if (activeCues && activeCues.length > 0) {
+      const cue = activeCues[0]
+      cueChangeCallback(cue.text || '')
     } else {
-      console.warn('[HLS] 未找到音轨:', lang, '可用:', hls.audioTracks.map(t => ({ id: t.id, lang: t.lang, name: t.name })))
+      cueChangeCallback('')
     }
   }
 
+  const setActiveTextTrackListener = (track) => {
+    if (activeTextTrack) {
+      activeTextTrack.removeEventListener('cuechange', onCueChange)
+    }
+    activeTextTrack = track
+    if (track) {
+      track.addEventListener('cuechange', onCueChange)
+    }
+  }
+
+  const stopWaitingTextTrack = () => {
+    if (cleanupTextTrackWait) {
+      cleanupTextTrackWait()
+      cleanupTextTrackWait = null
+    }
+  }
+
+  const findMatchingTextTrack = (lang) => {
+    const tracks = videoEl.textTracks || []
+    for (let i = 0; i < tracks.length; i++) {
+      if (tracks[i].kind === 'subtitles' && tracks[i].language === lang) {
+        return tracks[i]
+      }
+    }
+    return null
+  }
+
+  const waitForTextTrack = (lang, timeout = 8000) => {
+    stopWaitingTextTrack()
+    return new Promise((resolve) => {
+      let finished = false
+      let pollTimer = null
+      let timeoutTimer = null
+
+      const finish = (track) => {
+        if (finished) return
+        finished = true
+        stopWaitingTextTrack()
+        resolve(track)
+      }
+
+      const tryBind = (source = 'poll') => {
+        const track = findMatchingTextTrack(lang)
+        if (track) {
+          setActiveTextTrackListener(track)
+          console.log('[HLS] 已监听 textTrack cuechange:', lang, 'source=', source)
+          finish(track)
+          return true
+        }
+        return false
+      }
+
+      const onTrackListChanged = () => {
+        tryBind('textTracks')
+      }
+
+      const onSubtitleLoaded = () => {
+        setTimeout(() => {
+          tryBind('subtitle-loaded')
+        }, 0)
+      }
+
+      const trackList = videoEl.textTracks
+      if (trackList && typeof trackList.addEventListener === 'function') {
+        trackList.addEventListener('addtrack', onTrackListChanged)
+        trackList.addEventListener('change', onTrackListChanged)
+      }
+      hls.on(Hls.Events.SUBTITLE_TRACK_LOADED, onSubtitleLoaded)
+
+      pollTimer = setInterval(() => {
+        tryBind('interval')
+      }, 250)
+      timeoutTimer = setTimeout(() => {
+        console.warn('[HLS] 等待 textTrack 超时:', lang, 'subtitleTracks=', hls.subtitleTracks.map(t => ({ id: t.id, lang: t.lang, name: t.name })))
+        finish(null)
+      }, timeout)
+
+      cleanupTextTrackWait = () => {
+        clearInterval(pollTimer)
+        clearTimeout(timeoutTimer)
+        if (trackList && typeof trackList.removeEventListener === 'function') {
+          trackList.removeEventListener('addtrack', onTrackListChanged)
+          trackList.removeEventListener('change', onTrackListChanged)
+        }
+        hls.off(Hls.Events.SUBTITLE_TRACK_LOADED, onSubtitleLoaded)
+        cleanupTextTrackWait = null
+      }
+
+      tryBind('initial')
+    })
+  }
+
+  // ─── 字幕应用 ───
   const applySubtitle = (lang) => {
     if (!hls.subtitleTracks || hls.subtitleTracks.length === 0) {
-      console.log('[HLS] applySubtitle 缓存 pending（subtitleTracks 为空）:', lang)
-      pendingSubLang = lang
+      // 字幕列表尚未就绪：仅当用户指定了具体语言时才缓存 pending
+      // lang=null（关闭字幕）无需缓存，subtitleTracks 就绪后默认就是关闭状态
+      if (lang) {
+        console.log('[HLS] applySubtitle 缓存 pending（subtitleTracks 为空）:', lang)
+        pendingSubLang = lang
+      } else {
+        console.log('[HLS] applySubtitle 字幕列表为空，无需关闭')
+      }
       return
     }
     if (!lang) {
@@ -151,64 +254,44 @@ export function attachHls(videoEl, url) {
     }
   }
 
-  const setAudioTrackByLang = (lang) => applyAudio(lang)
-
-  // ─── 字幕文本回调（关闭原生渲染后，自己监听 cuechange 通知外部渲染） ───
-  let cueChangeCallback = null
-  let activeTextTrack = null
-  const onCueChange = () => {
-    if (!cueChangeCallback || !activeTextTrack) return
-    const activeCues = activeTextTrack.activeCues
-    if (activeCues && activeCues.length > 0) {
-      const cue = activeCues[0]
-      const text = cue.text || ''
-      cueChangeCallback(text)
-    } else {
-      cueChangeCallback('')
-    }
-  }
-
-  const setActiveTextTrackListener = (track) => {
-    if (activeTextTrack) {
-      activeTextTrack.removeEventListener('cuechange', onCueChange)
-    }
-    activeTextTrack = track
-    if (track) {
-      track.addEventListener('cuechange', onCueChange)
-    }
-  }
-
   // 字幕切换后，更新监听的 textTrack（原生渲染下 textTrack.mode='showing'，cuechange 会触发）
   const applySubtitleWithListener = (lang) => {
     applySubtitle(lang)
     if (!lang) {
+      stopWaitingTextTrack()
       if (cueChangeCallback) cueChangeCallback('')
       setActiveTextTrackListener(null)
-      return
+      return Promise.resolve(null)
     }
-    // 原生渲染模式下，textTrack 可能还没创建（manifest 解析后异步创建）
-    // 先尝试找，找不到就用轮询等 textTrack 就绪
-    const tryFindAndListen = (attemptsLeft = 10) => {
-      const tracks = videoEl.textTracks || []
-      console.log('[HLS] 尝试找 textTrack lang=', lang, 'tracks.length=', tracks.length,
-        'tracks=', Array.from(tracks).map(t => ({ kind: t.kind, lang: t.language, mode: t.mode })))
-      for (let i = 0; i < tracks.length; i++) {
-        if (tracks[i].kind === 'subtitles' && tracks[i].language === lang) {
-          setActiveTextTrackListener(tracks[i])
-          console.log('[HLS] 已监听 textTrack cuechange:', lang)
-          return true
-        }
-      }
-      if (attemptsLeft > 0) {
-        setTimeout(() => tryFindAndListen(attemptsLeft - 1), 200)
-      } else {
-        console.warn('[HLS] 轮询 10 次仍未找到 textTrack lang=', lang)
-      }
-      return false
-    }
-    tryFindAndListen()
+    return waitForTextTrack(lang)
   }
 
+  // ─── 音轨应用（独立音轨模式：视频切片纯视频无音频，hls.js 标准 audioTrack 切换即可） ───
+  const applyAudio = (lang) => {
+    if (!hls.audioTracks || hls.audioTracks.length === 0) {
+      console.log('[HLS] applyAudio 缓存 pending（audioTracks 为空）:', lang)
+      pendingAudioLang = lang
+      return Promise.resolve(false)
+    }
+    if (!lang) return Promise.resolve(false)
+    const track = hls.audioTracks.find(t => t.lang === lang)
+    if (track) {
+      const prevId = hls.audioTrack
+      console.log('[HLS] 切换音轨:', lang, '→', track.name || track.lang || ('#' + track.id),
+        '(id:', track.id, 'prev:', prevId, ')')
+      if (prevId !== track.id) {
+        // 独立音轨模式：video.m3u8 的 ts 分片是纯视频（无内嵌音频）
+        // hls.js 切换 audioTrack 时会自动清理旧 audio buffer 并加载新音轨
+        // 不需要手动 BUFFER_FLUSHING（否则会导致 Chrome autoplay 策略短暂 mute video）
+        hls.audioTrack = track.id
+      }
+      return Promise.resolve(true)
+    }
+    console.warn('[HLS] 未找到音轨:', lang, '可用:', hls.audioTracks.map(t => ({ id: t.id, lang: t.lang, name: t.name })))
+    return Promise.resolve(false)
+  }
+
+  const setAudioTrackByLang = (lang) => applyAudio(lang)
   const setSubtitleByLang = (lang) => applySubtitleWithListener(lang)
 
   // manifest 解析后：打印可用 tracks + 应用待应用的音轨/字幕
@@ -251,6 +334,7 @@ export function attachHls(videoEl, url) {
   return {
     hls,
     dispose: () => {
+      stopWaitingTextTrack()
       setActiveTextTrackListener(null)
       try { hls.destroy() } catch (e) { /* ignore */ }
     },
@@ -290,7 +374,6 @@ function setNativeSubtitle(videoEl, lang) {
  */
 export function waitForHlsReady(hlsController, timeout = 8000) {
   if (!hlsController || !hlsController.hls) {
-    // 原生 HLS，等待 video canplay
     console.log('[HLS] waitForHlsReady: 原生 HLS（hls=null），直接返回 true')
     return Promise.resolve(true)
   }
@@ -299,7 +382,7 @@ export function waitForHlsReady(hlsController, timeout = 8000) {
     console.log('[HLS] waitForHlsReady: audioTracks 已就绪，直接返回 true')
     return Promise.resolve(true)
   }
-  console.log('[HLS] waitForHlsReady: 等待 MANIFEST_PARSED，超时', timeout, 'ms')
+  console.log('[HLS] waitForHlsReady: 等待 MANIFEST_PARSED + AUDIO_TRACKS_UPDATED，超时', timeout, 'ms')
 
   return new Promise((resolve) => {
     let done = false
@@ -308,16 +391,24 @@ export function waitForHlsReady(hlsController, timeout = 8000) {
       done = true
       clearTimeout(timer)
       hls.off(Hls.Events.MANIFEST_PARSED, onParsed)
+      hls.off(Hls.Events.AUDIO_TRACKS_UPDATED, onTracks)
       hls.off(Hls.Events.ERROR, onError)
-      console.log('[HLS] waitForHlsReady: 完成 ok=', ok)
+      console.log('[HLS] waitForHlsReady: 完成 ok=', ok, 'audioTracks=', hls.audioTracks?.length || 0)
       resolve(ok)
     }
-    const onParsed = () => finish(true)
+    const onParsed = () => {
+      // hls.js 可能先触发 MANIFEST_PARSED（audioTracks 为空），再触发 AUDIO_TRACKS_UPDATED
+      if (hls.audioTracks && hls.audioTracks.length > 0) finish(true)
+    }
+    const onTracks = () => {
+      if (hls.audioTracks && hls.audioTracks.length > 0) finish(true)
+    }
     const onError = (_evt, data) => {
       if (data && data.fatal) finish(false)
     }
     const timer = setTimeout(() => finish(false), timeout)
     hls.on(Hls.Events.MANIFEST_PARSED, onParsed)
+    hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, onTracks)
     hls.on(Hls.Events.ERROR, onError)
   })
 }

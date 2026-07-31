@@ -14,6 +14,7 @@ export const useGameStore = defineStore('game', () => {
   const currentScene = ref(null)
   const isEnding = ref(false)
   const ending = ref(null)
+  const currentGameId = ref(null)  // 持久化，returnToLobby 不清理
   const choiceDelayId = ref(null)
   const timerInterval = ref(null)
   const showingChoices = ref(false)
@@ -49,6 +50,8 @@ export const useGameStore = defineStore('game', () => {
     showingChoices.value = false
 
     currentScene.value = scene
+    if (scene.game_id) currentGameId.value = scene.game_id
+    console.log('[GameStore] loadScene game_id=', scene.game_id, 'currentGameId=', currentGameId.value)
     isEnding.value = scene.is_ending && scene.ending
     if (scene.ending) ending.value = scene.ending
     else ending.value = null
@@ -189,7 +192,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   return {
-    currentScene, isEnding, ending,
+    currentScene, isEnding, ending, currentGameId,
     choiceDelayId, timerInterval, showingChoices, currentAudioEl,
     playSeconds,
     startNewGame, loadScene, makeChoice,

@@ -327,6 +327,49 @@ router.post('/batch', authorize('admin', 'editor'), upload.array('videos', 50), 
   }
 });
 
+// 编辑视频元数据（标题、归属游戏）
+router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const videoId = parseInt(req.params.id);
+    const { title, game_id } = req.body;
+
+    const [rows] = await pool.query('SELECT id, title, game_id FROM videos WHERE id = ?', [videoId]);
+    if (rows.length === 0) return res.status(404).json({ error: '视频不存在' });
+
+    const fields = [];
+    const values = [];
+    if (title !== undefined) {
+      if (!String(title).trim()) return res.status(400).json({ error: '标题不能为空' });
+      fields.push('title = ?'); values.push(String(title).trim());
+    }
+    if (game_id !== undefined) {
+      const newGameId = game_id ? parseInt(game_id) : null;
+      // 校验游戏存在（非空时）
+      if (newGameId) {
+        const [gRows] = await pool.query('SELECT id FROM games WHERE id = ?', [newGameId]);
+        if (gRows.length === 0) return res.status(400).json({ error: '目标游戏不存在' });
+      }
+      fields.push('game_id = ?'); values.push(newGameId);
+    }
+
+    if (fields.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
+    values.push(videoId);
+    await pool.query(`UPDATE videos SET ${fields.join(', ')} WHERE id = ?`, values);
+
+    // 若修改了 game_id，同步关联场景的 game_id（保持归属一致）
+    if (game_id !== undefined) {
+      const newGameId = game_id ? parseInt(game_id) : null;
+      await pool.query('UPDATE scenes SET game_id = ? WHERE video_id = ?', [newGameId, videoId]);
+      console.log(`[Videos] #${videoId} game_id 变更为 ${newGameId}，已同步关联场景`);
+    }
+
+    res.json({ message: '视频更新成功' });
+  } catch (err) {
+    console.error('[Videos] 更新失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
 // 删除视频
 router.delete('/:id', authorize('admin', 'editor'), async (req, res) => {
   try {
@@ -344,11 +387,11 @@ router.delete('/:id', authorize('admin', 'editor'), async (req, res) => {
   }
 });
 
-// 查询 HLS 转码状态
+// 查询 HLS 转码状态（同时返回 transcode_status，供前端列表响应式轮询）
 router.get('/:id/hls-status', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      'SELECT hls_status, hls_master_path, hls_dir FROM videos WHERE id = ?', [req.params.id]
+      'SELECT transcode_status, hls_status, hls_master_path, hls_dir FROM videos WHERE id = ?', [req.params.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: '视频不存在' });
     const [audios] = await pool.query(
@@ -358,8 +401,10 @@ router.get('/:id/hls-status', async (req, res) => {
       'SELECT id, language, label, hls_status FROM video_subtitles WHERE video_id = ?', [req.params.id]
     );
     res.json({
+      transcode_status: rows[0].transcode_status,
       hls_status: rows[0].hls_status,
       hls_master_path: rows[0].hls_master_path,
+      hls_dir: rows[0].hls_dir,
       audios,
       subtitles: subs
     });

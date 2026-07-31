@@ -90,19 +90,34 @@ router.get('/:id', async (req, res) => {
 // 创建场景
 router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { video_id, title, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order } = req.body;
+    const { video_id, title, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order, game_id } = req.body;
     if (!video_id || !title) return res.status(400).json({ error: '视频ID和标题不能为空' });
 
-    // 如果设为起始场景，先清除其他起始场景
+    // 校验视频存在并取其 game_id
+    const [vRows] = await pool.query('SELECT id, game_id FROM videos WHERE id = ?', [video_id]);
+    if (vRows.length === 0) return res.status(400).json({ error: '视频不存在' });
+
+    // 场景 game_id：优先用前端显式传入的，否则跟随视频归属
+    let sceneGameId = game_id !== undefined ? (game_id ? parseInt(game_id) : null) : vRows[0].game_id;
+    // 若显式指定了 game_id 且视频也有 game_id，必须一致（避免跨游戏引用）
+    if (game_id !== undefined && vRows[0].game_id && sceneGameId && sceneGameId !== vRows[0].game_id) {
+      return res.status(400).json({ error: `场景 game_id(${sceneGameId}) 与视频归属 game_id(${vRows[0].game_id}) 不一致` });
+    }
+
+    // 如果设为起始场景，先清除同游戏下的其他起始场景（避免不同游戏互相覆盖）
     if (is_start) {
-      await pool.query('UPDATE scenes SET is_start = 0');
+      if (sceneGameId) {
+        await pool.query('UPDATE scenes SET is_start = 0 WHERE game_id = ?', [sceneGameId]);
+      } else {
+        await pool.query('UPDATE scenes SET is_start = 0 WHERE game_id IS NULL');
+      }
     }
 
     const [result] = await pool.query(
-      `INSERT INTO scenes (video_id, title, title_i18n, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO scenes (video_id, title, title_i18n, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order, game_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [video_id, title, req.body.title_i18n || null, description || '', chapter || null, is_start ? 1 : 0, is_ending ? 1 : 0,
-       ending_id || null, choice_timer || 10, choice_delay || 0, sort_order || 0]
+       ending_id || null, choice_timer || 10, choice_delay || 0, sort_order || 0, sceneGameId]
     );
     res.status(201).json({ message: '场景创建成功', scene: { id: result.insertId, title } });
   } catch (err) {
@@ -114,15 +129,68 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
 // 更新场景
 router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { video_id, title, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order } = req.body;
+    const { video_id, title, description, chapter, is_start, is_ending, ending_id, choice_timer, choice_delay, sort_order, game_id } = req.body;
+
+    // 取当前场景（用于比对 game_id 和 is_start 清除范围）
+    const [sRows] = await pool.query('SELECT id, game_id, video_id FROM scenes WHERE id = ?', [req.params.id]);
+    if (sRows.length === 0) return res.status(404).json({ error: '场景不存在' });
+    const curScene = sRows[0];
+
+    // 计算目标 game_id：
+    // - 若传了 game_id，用传入值
+    // - 若传了 video_id（换视频），跟随新视频的 game_id
+    // - 否则保持当前值
+    let sceneGameId = curScene.game_id;
+    let needUpdateGameId = false;
+    // game_id 是否发生变化（用于兜底清除原 video_id）
+    let gameIdChanged = false;
+
+    if (game_id !== undefined) {
+      const newGameId = game_id ? parseInt(game_id) : null;
+      if (newGameId !== curScene.game_id) {
+        gameIdChanged = true;
+      }
+      sceneGameId = newGameId;
+      needUpdateGameId = true;
+    }
+
+    // 若更换视频：校验视频存在，且 game_id 与场景 game_id 一致
+    if (video_id !== undefined) {
+      const [vRows] = await pool.query('SELECT id, game_id FROM videos WHERE id = ?', [video_id]);
+      if (vRows.length === 0) return res.status(400).json({ error: '视频不存在' });
+      // 场景 game_id 与视频 game_id 必须一致（都为空或相等）
+      if (sceneGameId && vRows[0].game_id && vRows[0].game_id !== sceneGameId) {
+        return res.status(400).json({ error: `视频归属于其他游戏（game_id=${vRows[0].game_id}），不能跨游戏引用` });
+      }
+      // 场景 game_id 为空时跟随视频
+      if (!sceneGameId && vRows[0].game_id) {
+        sceneGameId = vRows[0].game_id;
+        needUpdateGameId = true;
+      }
+    } else if (gameIdChanged && curScene.video_id) {
+      // 兜底：game_id 变化但未传 video_id，原视频已不属于新游戏，主动清除 video_id
+      // 前端已在确认框后清除，这里防止绕过前端直接调 API
+      console.log(`[Scenes] #${req.params.id} game_id 变更(${curScene.game_id}→${sceneGameId})，将清除原 video_id=${curScene.video_id}`);
+    }
 
     if (is_start) {
-      await pool.query('UPDATE scenes SET is_start = 0 WHERE id != ?', [req.params.id]);
+      // 仅清除同游戏下的其他起始场景
+      if (sceneGameId) {
+        await pool.query('UPDATE scenes SET is_start = 0 WHERE id != ? AND game_id = ?', [req.params.id, sceneGameId]);
+      } else {
+        await pool.query('UPDATE scenes SET is_start = 0 WHERE id != ? AND game_id IS NULL', [req.params.id]);
+      }
     }
 
     const fields = [];
     const values = [];
-    if (video_id !== undefined) { fields.push('video_id = ?'); values.push(video_id); }
+    if (video_id !== undefined) {
+      fields.push('video_id = ?'); values.push(video_id);
+    } else if (gameIdChanged && curScene.video_id) {
+      // 兜底：game_id 变化但未传 video_id，清除原 video_id（原视频已不属于新游戏）
+      fields.push('video_id = ?'); values.push(null);
+    }
+    if (needUpdateGameId) { fields.push('game_id = ?'); values.push(sceneGameId); }
     if (title !== undefined) { fields.push('title = ?'); values.push(title); }
     if (description !== undefined) { fields.push('description = ?'); values.push(description); }
     if (chapter !== undefined) { fields.push('chapter = ?'); values.push(chapter); }
