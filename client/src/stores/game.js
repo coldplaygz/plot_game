@@ -107,7 +107,7 @@ export const useGameStore = defineStore('game', () => {
 
     if (res.points_consumed && res.points_balance !== undefined) {
       if (authStore.user) authStore.user.points = res.points_balance
-      toast.show('-1 💎 剩余 ' + res.points_balance)
+      toast.show(`-${res.point_cost} 💎 剩余 ${res.points_balance}`)
     }
 
     if (res.next_scene_id) {

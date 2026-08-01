@@ -1,18 +1,23 @@
 /**
  * HLS 多音轨转码模块（单码率 + 增量重建）
  *
+ * 独立音轨模式：视频切片不含音频，每条音轨独立切片为 audio_{lang}.m3u8，
+ * master.m3u8 中 EXT-X-MEDIA:TYPE=AUDIO 通过 URI 引用独立音轨播放列表。
+ * hls.js 切换音轨时会发起独立网络请求下载对应音轨分片。
+ *
  * 产物结构：
  *   uploads/videos/{videoId}_hls/
- *   ├── master.m3u8          # 主播放列表（串联视频/音频/字幕）
- *   ├── video.m3u8           # 视频播放列表（无外挂音轨时含原声）
+ *   ├── master.m3u8          # 主播放列表（EXT-X-MEDIA 引用独立音轨/字幕）
+ *   ├── video.m3u8           # 视频播放列表（有外挂音轨时纯视频，无外挂时含原音）
  *   ├── seg_v_000.ts ...     # 视频分片
- *   ├── audio_{lang}.m3u8    # 每条音轨子播放列表（独立）
+ *   ├── audio_{lang}.m3u8    # 每条音轨独立子播放列表
  *   ├── seg_a_{lang}_*.ts    # 音轨分片
- *   └── sub_{lang}.vtt       # 字幕（直接引用 WebVTT，不分片）
+ *   ├── sub_{lang}.m3u8      # 字幕子播放列表（引用 sub_{lang}.vtt）
+ *   └── sub_{lang}.vtt       # 字幕文件
  *
  * 重建策略：
- *   - 全量重建：视频上传/手动重建 → 重切视频+所有音轨+字幕
- *   - 增量-音轨：上传/替换音轨 → 只切该条音轨 + regenMaster
+ *   - 全量重建：视频上传/手动重建 → 重切视频(纯视频)+所有音轨+字幕
+ *   - 增量-音轨：上传/替换音轨 → 只切该条音轨 + regenMaster（无需重切视频）
  *   - 增量-字幕：上传字幕 → 只复制 vtt + regenMaster
  *   - 删除-音轨：删对应 audio_{lang}.* 分片 + regenMaster
  *   - 删除-字幕：删对应 sub_{lang}.vtt + regenMaster
@@ -50,14 +55,15 @@ function withVideoLock(videoId, fn) {
   return next;
 }
 
-// ─── 探测视频编码 ───
+// ─── 探测视频编码 + 时长 ───
 function probeVideoCodec(filePath) {
   return new Promise((resolve) => {
     ffmpeg.ffprobe(filePath, (err, meta) => {
-      if (err || !meta || !meta.streams) { resolve({ codec: null, bandwidth: 1500000 }); return; }
+      if (err || !meta || !meta.streams) { resolve({ codec: null, bandwidth: 1500000, duration: 0 }); return; }
       const v = meta.streams.find(s => s.codec_type === 'video');
       const bandwidth = v && v.bit_rate ? parseInt(v.bit_rate) : 1500000;
-      resolve({ codec: v ? v.codec_name : null, bandwidth });
+      const duration = meta.format && meta.format.duration ? parseFloat(meta.format.duration) : 0;
+      resolve({ codec: v ? v.codec_name : null, bandwidth, duration });
     });
   });
 }
@@ -67,7 +73,21 @@ function getHlsDir(videoId) {
   return path.join('uploads', 'videos', `${videoId}_hls`);
 }
 
+// ─── 读取 m3u8 的总时长（#EXTINF 累加）───
+function readM3u8Duration(m3u8Path) {
+  try {
+    if (!fs.existsSync(m3u8Path)) return 0;
+    const content = fs.readFileSync(m3u8Path, 'utf8');
+    const matches = content.match(/#EXTINF:([\d.]+)/g);
+    if (!matches || matches.length === 0) return 0;
+    return matches.reduce((sum, s) => sum + parseFloat(s.match(/[\d.]+/)[0]), 0);
+  } catch (e) {
+    return 0;
+  }
+}
+
 // ─── 全量 HLS 转码（视频上传/手动重建） ───
+// 方案B：把所有音轨 mux 进 video.m3u8 的每个 ts 分片，不再独立切片音轨
 async function transcodeVideoToHLS(videoId) {
   const [vRows] = await pool.query('SELECT * FROM videos WHERE id = ?', [videoId]);
   if (vRows.length === 0) throw new Error('视频不存在');
@@ -88,37 +108,65 @@ async function transcodeVideoToHLS(videoId) {
 
   const hlsDirAbs = path.resolve(hlsDir);
 
-  // ── 1. 视频分片 ──
-  // 有外挂音轨时去掉原音轨（-an），音轨单独切片；无外挂音轨时保留原音轨（AAC 编码）
-  const { codec, bandwidth } = await probeVideoCodec(video.file_path);
+  // ── 1. 视频切片（独立音轨模式：有外挂音轨时视频切片不含音频，每条音轨独立切片） ──
+  const { codec, bandwidth, duration } = await probeVideoCodec(video.file_path);
   const hasAltAudio = audios.length > 0;
   const videoCodecOpt = codec === 'h264' ? '-c:v copy' : '-c:v libx264 -profile:v main -pix_fmt yuv420p -preset fast -crf 23';
-  const audioOpt = hasAltAudio ? ['-an'] : ['-c:a', 'aac', '-b:a', '128k'];
-  console.log(`[HLS] #${videoId} 视频编码=${codec || 'unknown'}, 使用=${codec === 'h264' ? 'copy' : 'libx264'}, 外挂音轨=${hasAltAudio ? '有(去原音)' : '无(保留原音)'}`);
+  console.log(`[HLS] #${videoId} 视频编码=${codec || 'unknown'}, 时长=${duration.toFixed(2)}s, 外挂音轨=${hasAltAudio ? audios.length + '条(独立切片)' : '无(保留原音)'}`);
 
   await pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['transcoding', videoId]);
+
+  // 过滤出文件存在的有效外挂音轨
+  const validAudios = [];
+  for (const audio of audios) {
+    if (!fs.existsSync(audio.file_path)) {
+      console.warn(`[HLS] #${videoId} 音轨文件不存在，跳过: #${audio.id} ${audio.file_path}`);
+      await pool.query('UPDATE video_audios SET hls_status=? WHERE id=?', ['failed', audio.id]);
+      continue;
+    }
+    validAudios.push(audio);
+  }
+
+  const useIndependentAudio = hasAltAudio && validAudios.length > 0;
+
+  // 视频切片：有外挂音轨则纯视频(-an)，无外挂音轨则保留原音
+  const videoOutputOpts = [
+    '-map', '0:v',
+    // 独立音轨模式：-an 禁用音频（不指定 -c:a，否则 ffmpeg 报 aac: Invalid argument）
+    // 含原音模式：-map 0:a? 映射音频 + aac 编码
+    ...(useIndependentAudio ? ['-an'] : ['-map', '0:a?', '-c:a', 'aac', '-b:a', '128k']),
+    videoCodecOpt,
+    '-hls_time', '6',
+    '-hls_list_size', '0',
+    '-hls_segment_filename', path.join(hlsDirAbs, 'seg_v_%03d.ts')
+  ];
+  // 截断到视频时长，防止音轨比视频长导致 video.ended 不触发
+  if (duration && duration > 0) {
+    videoOutputOpts.push('-t', String(duration));
+  }
+
   await new Promise((resolve, reject) => {
     ffmpeg(video.file_path)
-      .outputOptions([
-        videoCodecOpt,
-        ...audioOpt,
-        '-hls_time', '6',
-        '-hls_list_size', '0',
-        '-hls_segment_filename', path.join(hlsDirAbs, 'seg_v_%03d.ts')
-      ])
+      .outputOptions(videoOutputOpts)
       .output(path.join(hlsDirAbs, 'video.m3u8'))
-      .on('start', cmd => console.log(`[HLS] #${videoId} 视频分片启动`))
-      .on('end', () => { console.log(`[HLS] #${videoId} 视频分片完成`); resolve(); })
+      .on('start', cmdStr => console.log(`[HLS] #${videoId} 视频切片启动 (${useIndependentAudio ? '纯视频' : '含原音'})`))
+      .on('end', () => {
+        console.log(`[HLS] #${videoId} 视频切片完成`);
+        resolve();
+      })
       .on('error', (err) => reject(new Error('视频分片失败: ' + err.message)))
       .run();
   });
 
-  // ── 2. 每条音轨分片（AAC 128k） ──
-  for (const audio of audios) {
-    await sliceAudioTrack(videoId, audio, hlsDirAbs, hlsDir);
+  // ── 2. 独立切片每条音轨（独立音轨模式核心） ──
+  if (useIndependentAudio) {
+    console.log(`[HLS] #${videoId} 开始独立切片 ${validAudios.length} 条音轨`);
+    for (const audio of validAudios) {
+      await sliceAudioTrack(videoId, audio, hlsDirAbs, hlsDir, duration);
+    }
   }
 
-  // ── 3. 字幕：复制 .vtt 到 hls 目录 ──
+  // ── 3. 字幕：复制 .vtt 到 hls 目录（字幕保持独立，不 mux 进视频分片） ──
   for (const sub of subs) {
     await copySubtitle(videoId, sub, hlsDirAbs, hlsDir);
   }
@@ -132,7 +180,8 @@ async function transcodeVideoToHLS(videoId) {
 }
 
 // ─── 单条音轨切片（全量/增量共用） ───
-async function sliceAudioTrack(videoId, audio, hlsDirAbs, hlsDir) {
+// videoDuration: 视频时长（秒），用于截断音频，防止音轨比视频长导致 video.ended 不触发
+async function sliceAudioTrack(videoId, audio, hlsDirAbs, hlsDir, videoDuration) {
   if (!fs.existsSync(audio.file_path)) {
     console.warn(`[HLS] #${videoId} 音轨文件不存在，跳过: #${audio.id} ${audio.file_path}`);
     await pool.query('UPDATE video_audios SET hls_status=? WHERE id=?', ['failed', audio.id]);
@@ -144,16 +193,25 @@ async function sliceAudioTrack(videoId, audio, hlsDirAbs, hlsDir) {
   try {
     // 增量场景：先清理该音轨的旧分片
     removeAudioFiles(hlsDirAbs, lang);
+    const outputOpts = [
+      '-vn',
+      '-c:a', 'aac',
+      '-b:a', '128k',
+      '-hls_time', '6',
+      '-hls_list_size', '0',
+      '-hls_segment_filename', path.join(hlsDirAbs, segPattern)
+    ];
+    // 截断音频到视频时长，防止音轨比视频长导致 video.ended 不触发
+    // -t 作为输入选项（inputOptions），确保在 hls 分片前截断
+    const inputOpts = [];
+    if (videoDuration && videoDuration > 0) {
+      inputOpts.push('-t', String(videoDuration));
+      console.log(`[HLS] #${videoId} 音轨 ${lang} 截断到 ${videoDuration.toFixed(2)}s`);
+    }
     await new Promise((resolve, reject) => {
       ffmpeg(audio.file_path)
-        .outputOptions([
-          '-vn',
-          '-c:a', 'aac',
-          '-b:a', '128k',
-          '-hls_time', '6',
-          '-hls_list_size', '0',
-          '-hls_segment_filename', path.join(hlsDirAbs, segPattern)
-        ])
+        .inputOptions(inputOpts)
+        .outputOptions(outputOpts)
         .output(path.join(hlsDirAbs, playListName))
         .on('end', () => { console.log(`[HLS] #${videoId} 音轨分片完成: ${lang}`); resolve(); })
         .on('error', (err) => reject(new Error(`音轨 ${lang} 分片失败: ` + err.message)))
@@ -250,12 +308,21 @@ async function regenMaster(videoId, bandwidth) {
   );
 
   const masterContent = buildMasterPlaylist(audios, subs, bandwidth || 1500000);
+  // 清理可能残留的旧 master_*.m3u8 文件（旧命名格式，独立音轨模式下不再产生）
+  const staleMasters = fs.existsSync(hlsDirAbs)
+    ? fs.readdirSync(hlsDirAbs).filter(name => /^master_.+\.m3u8$/.test(name))
+    : [];
+  staleMasters.forEach((name) => {
+    try { fs.unlinkSync(path.join(hlsDirAbs, name)); } catch (e) { /* ignore */ }
+  });
+  // 注意：独立音轨模式下 audio_*.m3u8 和 seg_a_*.ts 是合法的音轨分片文件，不能清理
+  // 仅需清理 DB 中标记为 failed 但文件残留的音轨（由 sliceAudioTrack 内部 removeAudioFiles 处理）
   fs.writeFileSync(path.join(hlsDirAbs, 'master.m3u8'), masterContent, 'utf8');
   console.log(`[HLS] #${videoId} master.m3u8 已重新生成`);
 }
 
 // ─── 生成 master.m3u8 内容 ───
-// 只包含 hls_status === 'done' 的音轨/字幕，避免引用不存在的子播放列表
+// 独立音轨模式：每条音轨指向独立的 audio_{lang}.m3u8，hls.js 切换时会发起独立请求
 function buildMasterPlaylist(audios, subs, bandwidth) {
   const bw = Math.max(parseInt(bandwidth) || 1500000, 500000);
   const lines = ['#EXTM3U', '#EXT-X-VERSION:6'];
@@ -263,9 +330,10 @@ function buildMasterPlaylist(audios, subs, bandwidth) {
   const okAudios = audios.filter(a => a.hls_status === 'done');
   const okSubs = subs.filter(s => s.hls_status === 'done');
 
+  // 音轨：独立切片模式，每条音轨指向自己的 audio_{lang}.m3u8
   const audioGroupId = 'audio-group';
-  okAudios.forEach((a) => {
-    const isDefault = a.is_default ? 'YES' : 'NO';
+  okAudios.forEach((a, i) => {
+    const isDefault = (i === 0 || a.is_default) ? 'YES' : 'NO';
     const lang = a.language || ('audio' + a.id);
     lines.push(
       `#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="${audioGroupId}",NAME="${a.label}",LANGUAGE="${lang}",DEFAULT=${isDefault},AUTOSELECT=${isDefault},URI="audio_${lang}.m3u8"`
@@ -306,153 +374,76 @@ function enqueueHLS(videoId) {
 }
 
 // 增量：重建单条音轨（上传/替换音轨后调用）
+// 独立音轨模式：只切该条音轨 + regenMaster，无需重新切视频
 function rebuildAudioTrackHLS(videoId, audioId) {
   withVideoLock(videoId, async () => {
-    const [vRows] = await pool.query('SELECT hls_dir, hls_status FROM videos WHERE id = ?', [videoId]);
+    console.log(`[HLS] #${videoId} 增量重建音轨(audioId=${audioId})`);
+    const [vRows] = await pool.query('SELECT hls_dir, duration FROM videos WHERE id = ?', [videoId]);
     if (vRows.length === 0) return;
     const video = vRows[0];
-
-    // HLS 目录不存在或视频未转码 → 降级全量
+    // HLS 目录不存在或未全量转码 → 降级全量
     if (!video.hls_dir || !fs.existsSync(video.hls_dir) || !fs.existsSync(path.join(video.hls_dir, 'video.m3u8'))) {
       console.log(`[HLS] #${videoId} HLS 目录不存在，降级全量重建`);
       await transcodeVideoToHLS(videoId);
       return;
     }
-
-    // 视频从「无外挂音轨」变「有外挂音轨」时，需重切视频（去原音轨）
-    const [aRows] = await pool.query('SELECT COUNT(*) as cnt FROM video_audios WHERE video_id = ?', [videoId]);
-    const audioCount = aRows[0].cnt;
-    const [audioRows] = await pool.query('SELECT * FROM video_audios WHERE id = ?', [audioId]);
-    if (audioRows.length === 0) return;
-    const audio = audioRows[0];
-
-    // 检查 video.m3u8 是否已去音轨（通过文件名特征无法判断，改用：第一条音轨且 video.m3u8 含音轨时重切）
-    // 简化策略：如果是第一条音轨，重切视频去掉原音轨
-    if (audioCount === 1) {
-      console.log(`[HLS] #${videoId} 首条音轨，重切视频去原音`);
-      const { bandwidth } = await probeVideoCodec((await pool.query('SELECT file_path FROM videos WHERE id = ?', [videoId]))[0][0].file_path);
-      await pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['transcoding', videoId]);
-      const hlsDirAbs = path.resolve(video.hls_dir);
-      const [vRow] = await pool.query('SELECT file_path FROM videos WHERE id = ?', [videoId]);
-      await new Promise((resolve, reject) => {
-        ffmpeg(vRow[0].file_path)
-          .outputOptions([
-            '-c:v', 'copy',
-            '-an',
-            '-hls_time', '6',
-            '-hls_list_size', '0',
-            '-hls_segment_filename', path.join(hlsDirAbs, 'seg_v_%03d.ts')
-          ])
-          .output(path.join(hlsDirAbs, 'video.m3u8'))
-          .on('end', () => resolve())
-          .on('error', (err) => reject(new Error('视频重切失败: ' + err.message)))
-          .run();
-      });
-      await sliceAudioTrack(videoId, audio, hlsDirAbs, video.hls_dir);
-      await regenMaster(videoId, bandwidth);
-      await pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['done', videoId]);
-      console.log(`[HLS] #${videoId} 首条音轨增量完成`);
-      return;
-    }
-
-    // 已有多条音轨，只切这一条 + regenMaster
-    console.log(`[HLS] #${videoId} 增量切音轨: ${audio.language}`);
+    const [aRows] = await pool.query('SELECT * FROM video_audios WHERE id = ?', [audioId]);
+    if (aRows.length === 0) return;
     const hlsDirAbs = path.resolve(video.hls_dir);
-    await sliceAudioTrack(videoId, audio, hlsDirAbs, video.hls_dir);
+    // 读取视频时长用于截断音轨（用 video.m3u8 实际时长，DB duration 字段可能不准）
+    const videoDuration = readM3u8Duration(path.join(video.hls_dir, 'video.m3u8')) || video.duration || 0;
+    await sliceAudioTrack(videoId, aRows[0], hlsDirAbs, video.hls_dir, videoDuration);
     await regenMaster(videoId);
+    console.log(`[HLS] #${videoId} 增量音轨完成: ${aRows[0].language}`);
   }).catch(e => {
     console.warn(`[HLS] 增量音轨失败 #${videoId}:`, e.message);
+    pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['failed', videoId]).catch(() => {});
   });
 }
 
 // 增量：删除音轨（删除音轨后调用）
+// 独立音轨模式：删该条音轨分片文件 + regenMaster，无需重新切视频
 function removeAudioTrackHLS(videoId, audioId) {
   withVideoLock(videoId, async () => {
+    console.log(`[HLS] #${videoId} 增量删除音轨(audioId=${audioId})`);
     const [vRows] = await pool.query('SELECT hls_dir FROM videos WHERE id = ?', [videoId]);
     if (vRows.length === 0) return;
     const video = vRows[0];
-    if (!video.hls_dir || !fs.existsSync(video.hls_dir)) return;
-
-    // 音轨已从 DB 删除，这里只能拿到 audioId，无法查 language
-    // 由调用方传入 lang 更好，但为保持接口简单，从文件系统匹配 audioId 对应的分片
-    // 实际上 removeAudioTrackHLS 应在删除 DB 记录前调用以获取 lang
-    // 这里作为兜底：由 media.js 传入 lang
-    console.log(`[HLS] #${videoId} 音轨删除（由 media.js 处理文件清理）`);
-    await regenMaster(videoId);
-
-    // 如果删完音轨后没有外挂音轨了，需重切视频恢复原音轨
-    const [aRows] = await pool.query('SELECT COUNT(*) as cnt FROM video_audios WHERE video_id = ?', [videoId]);
-    if (aRows[0].cnt === 0) {
-      console.log(`[HLS] #${videoId} 无外挂音轨，重切视频恢复原音`);
-      const [vRow] = await pool.query('SELECT file_path FROM videos WHERE id = ?', [videoId]);
-      if (fs.existsSync(vRow[0].file_path)) {
-        const hlsDirAbs = path.resolve(video.hls_dir);
-        await pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['transcoding', videoId]);
-        await new Promise((resolve, reject) => {
-          ffmpeg(vRow[0].file_path)
-            .outputOptions([
-              '-c:v', 'copy',
-              '-c:a', 'aac', '-b:a', '128k',
-              '-hls_time', '6',
-              '-hls_list_size', '0',
-              '-hls_segment_filename', path.join(hlsDirAbs, 'seg_v_%03d.ts')
-            ])
-            .output(path.join(hlsDirAbs, 'video.m3u8'))
-            .on('end', () => resolve())
-            .on('error', (err) => reject(new Error('视频重切失败: ' + err.message)))
-            .run();
-        });
-        await pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['done', videoId]);
-        await regenMaster(videoId);
-      }
+    if (!video.hls_dir || !fs.existsSync(video.hls_dir)) {
+      console.log(`[HLS] #${videoId} HLS 目录不存在，跳过`);
+      return;
     }
+    // 查出该音轨的 language，用于定位分片文件
+    const [aRows] = await pool.query('SELECT language FROM video_audios WHERE id = ?', [audioId]);
+    if (aRows.length > 0) {
+      const lang = aRows[0].language || ('audio' + audioId);
+      removeAudioFiles(path.resolve(video.hls_dir), lang);
+      console.log(`[HLS] #${videoId} 已删除音轨 ${lang} 分片文件`);
+    }
+    await regenMaster(videoId);
   }).catch(e => {
     console.warn(`[HLS] 删除音轨失败 #${videoId}:`, e.message);
+    pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['failed', videoId]).catch(() => {});
   });
 }
 
-// 增量：删除音轨（带 lang 参数，用于清理分片文件）
+// 增量：删除音轨（带 lang 参数）
 function removeAudioTrackByLangHLS(videoId, lang) {
   withVideoLock(videoId, async () => {
+    console.log(`[HLS] #${videoId} 增量删除音轨(lang=${lang})`);
     const [vRows] = await pool.query('SELECT hls_dir FROM videos WHERE id = ?', [videoId]);
     if (vRows.length === 0) return;
     const video = vRows[0];
-    if (!video.hls_dir || !fs.existsSync(video.hls_dir)) return;
-
-    // 删除该音轨的分片文件
-    const hlsDirAbs = path.resolve(video.hls_dir);
-    removeAudioFiles(hlsDirAbs, lang);
-    console.log(`[HLS] #${videoId} 已删除音轨 ${lang} 分片文件`);
-
-    await regenMaster(videoId);
-
-    // 如果删完音轨后没有外挂音轨了，需重切视频恢复原音轨
-    const [aRows] = await pool.query('SELECT COUNT(*) as cnt FROM video_audios WHERE video_id = ?', [videoId]);
-    if (aRows[0].cnt === 0) {
-      console.log(`[HLS] #${videoId} 无外挂音轨，重切视频恢复原音`);
-      const [vRow] = await pool.query('SELECT file_path FROM videos WHERE id = ?', [videoId]);
-      if (fs.existsSync(vRow[0].file_path)) {
-        await pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['transcoding', videoId]);
-        await new Promise((resolve, reject) => {
-          ffmpeg(vRow[0].file_path)
-            .outputOptions([
-              '-c:v', 'copy',
-              '-c:a', 'aac', '-b:a', '128k',
-              '-hls_time', '6',
-              '-hls_list_size', '0',
-              '-hls_segment_filename', path.join(hlsDirAbs, 'seg_v_%03d.ts')
-            ])
-            .output(path.join(hlsDirAbs, 'video.m3u8'))
-            .on('end', () => resolve())
-            .on('error', (err) => reject(new Error('视频重切失败: ' + err.message)))
-            .run();
-        });
-        await pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['done', videoId]);
-        await regenMaster(videoId);
-      }
+    if (!video.hls_dir || !fs.existsSync(video.hls_dir)) {
+      console.log(`[HLS] #${videoId} HLS 目录不存在，跳过`);
+      return;
     }
+    removeAudioFiles(path.resolve(video.hls_dir), lang);
+    console.log(`[HLS] #${videoId} 已删除音轨 ${lang} 分片文件`);
+    await regenMaster(videoId);
   }).catch(e => {
     console.warn(`[HLS] 删除音轨失败 #${videoId}:`, e.message);
+    pool.query('UPDATE videos SET hls_status=? WHERE id=?', ['failed', videoId]).catch(() => {});
   });
 }
 
@@ -521,6 +512,7 @@ module.exports = {
   enqueueHLS,
   recoverPendingHLS,
   transcodeVideoToHLS,
+  regenMaster,
   rebuildAudioTrackHLS,
   removeAudioTrackByLangHLS,
   addSubtitleHLS,
