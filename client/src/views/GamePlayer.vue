@@ -216,11 +216,13 @@ import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 import { useGameStore } from '../stores/game'
 import { useLangStore } from '../stores/lang'
+import { useConfirm } from '../composables/useConfirm'
 import SaveLoadModal from '../components/SaveLoadModal.vue'
 
 const route = useRoute()
 const router = useRouter()
 const game = useGameStore()
+const { confirm } = useConfirm()
 const langStore = useLangStore()
 
 const rootEl = ref(null)
@@ -642,11 +644,34 @@ function showChoices(choices, timer) {
 }
 
 async function onChoose(choiceId) {
+  // 备份当前选项，积分不足取消时恢复
+  const prevChoices = currentChoices.value
+  const prevScene = game.currentScene
   choicesActive.value = false
   currentChoices.value = []
 
   const result = await game.makeChoice(choiceId)
   if (!result) return
+
+  if (result.insufficientPoints) {
+    const go = await confirm({
+      title: '积分不足',
+      message: `选择此选项需要 ${result.required} 💎，当前余额 ${result.current} 💎`,
+      icon: '💎',
+      confirmText: '去充值',
+      cancelText: '取消'
+    })
+    if (go) {
+      router.push('/profile')
+    } else {
+      // 取消：恢复选项，让用户重新选择
+      if (game.currentScene === prevScene) {
+        currentChoices.value = prevChoices
+        choicesActive.value = true
+      }
+    }
+    return
+  }
 
   if (result.finished) {
     router.push('/ending')
