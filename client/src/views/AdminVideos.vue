@@ -10,6 +10,11 @@
         <option :value="null">全部游戏</option>
         <option v-for="g in games" :key="g.id" :value="g.id">{{ g.title }}</option>
       </select>
+      <div class="flex-1"></div>
+      <button v-if="selectedIds.size > 0" @click="batchDelete"
+        class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c]">
+        🗑 批量删除 ({{ selectedIds.size }})
+      </button>
     </div>
 
     <!-- Batch Upload -->
@@ -74,6 +79,10 @@
     <table class="w-full border-collapse text-[13px]">
       <thead>
         <tr>
+          <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0 w-10">
+            <input type="checkbox" :checked="allSelected" @change="toggleSelectAll"
+              class="accent-brand-purple cursor-pointer" />
+          </th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">ID</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">标题</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">归属游戏</th>
@@ -89,9 +98,13 @@
       </thead>
       <tbody>
         <tr v-if="!videos.length">
-          <td colspan="11" class="text-center py-[50px] px-5 text-text-dimmest text-sm">暂无视频</td>
+          <td colspan="12" class="text-center py-[50px] px-5 text-text-dimmest text-sm">暂无视频</td>
         </tr>
         <tr v-for="v in pageVideos" :key="v.id" class="hover:bg-[#1a1a3e]">
+          <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
+            <input type="checkbox" :checked="selectedIds.has(v.id)" @change="toggleSelect(v.id)"
+              class="accent-brand-purple cursor-pointer" />
+          </td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ v.id }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ v.title }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dim">{{ v.game_title || '-' }}</td>
@@ -176,7 +189,9 @@
                 <span v-else class="text-text-dimmer text-[11px]">—</span>
               </td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
-                <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c]" @click="deleteMediaItem('audio', a.id)">删除</button>
+                <button v-if="playingAudioId === a.id" class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-amber-500/20 text-amber-400 hover:bg-amber-500/30" @click="stopAudio()">⏹ 停止</button>
+                <button v-else class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#059669] text-white hover:bg-[#047857]" @click="playAudio(a)">▶ 试听</button>
+                <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c] ml-1" @click="deleteMediaItem('audio', a.id)">删除</button>
               </td>
             </tr>
           </tbody>
@@ -225,7 +240,8 @@
                 <span v-else class="text-text-dimmer text-[11px]">—</span>
               </td>
               <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
-                <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c]" @click="deleteMediaItem('subtitle', s.id)">删除</button>
+                <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple" @click="openSubtitleEdit(s)">✏️ 编辑</button>
+                <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c] ml-1" @click="deleteMediaItem('subtitle', s.id)">删除</button>
               </td>
             </tr>
           </tbody>
@@ -280,6 +296,26 @@
       </template>
     </AppModal>
 
+    <!-- 字幕编辑弹窗 -->
+    <AppModal
+      :visible="subEditVisible"
+      :title="'✏️ 编辑字幕 - ' + (subEditLabel || '')"
+      @close="subEditVisible = false"
+    >
+      <div class="mt-2">
+        <textarea v-model="subEditContent" rows="14" spellcheck="false"
+          class="w-full px-3 py-2 bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] font-mono outline-none focus:border-brand-purple resize-y"
+          placeholder="WEBVTT&#10;&#10;00:00:01.000 --> 00:00:03.000&#10;字幕内容"></textarea>
+        <p class="text-[11px] text-text-dimmer mt-1">保存后自动同步 HLS 副本，无需重建</p>
+      </div>
+      <template #actions>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-brand-purple text-white hover:bg-brand-purple-dark shrink-0" @click="saveSubtitleEdit" :disabled="subSaving">
+          {{ subSaving ? '保存中...' : '保存' }}
+        </button>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple shrink-0" @click="subEditVisible = false">取消</button>
+      </template>
+    </AppModal>
+
     <!-- Edit Video Modal -->
     <AppModal
       :visible="editModalVisible"
@@ -325,6 +361,40 @@ const page = ref(1)
 const pageSize = ref(10)
 const videoCache = ref({})
 
+// 批量删除选中
+const selectedIds = ref(new Set())
+const allSelected = computed(() => {
+  const ids = pageVideos.value.map(v => v.id)
+  return ids.length > 0 && ids.every(id => selectedIds.value.has(id))
+})
+function toggleSelect(id) {
+  const s = new Set(selectedIds.value)
+  if (s.has(id)) s.delete(id)
+  else s.add(id)
+  selectedIds.value = s
+}
+function toggleSelectAll() {
+  const s = new Set(selectedIds.value)
+  const ids = pageVideos.value.map(v => v.id)
+  const allOn = ids.every(id => s.has(id))
+  if (allOn) ids.forEach(id => s.delete(id))
+  else ids.forEach(id => s.add(id))
+  selectedIds.value = s
+}
+async function batchDelete() {
+  const ids = [...selectedIds.value]
+  if (ids.length === 0) return
+  if (!confirm(`确定删除选中的 ${ids.length} 个视频?\n关联的场景、选项也将一并删除!`)) return
+  try {
+    const res = await post('/videos/batch-delete', { ids })
+    show(res.message || '批量删除成功')
+    selectedIds.value = new Set()
+    loadVideos()
+  } catch (e) {
+    show('批量删除失败: ' + e.message)
+  }
+}
+
 const games = ref([])
 const filterGameId = ref(null)
 
@@ -365,6 +435,66 @@ const audioLang = ref('zh')
 const audioLabel = ref('')
 const audioDefault = ref(false)
 const audioFileInput = ref(null)
+
+// 音轨试听
+const playingAudioId = ref(null)
+let audioPreview = null
+function stopAudio() {
+  if (audioPreview) {
+    audioPreview.pause()
+    audioPreview.src = ''
+    audioPreview = null
+  }
+  playingAudioId.value = null
+}
+function playAudio(a) {
+  stopAudio()
+  if (!a?.file_path) return show('音轨文件不存在')
+  const url = '/' + a.file_path.replace(/\\/g, '/')
+  audioPreview = new Audio()
+  audioPreview.src = url
+  audioPreview.onended = () => { playingAudioId.value = null }
+  audioPreview.onerror = () => { show('播放失败'); stopAudio() }
+  audioPreview.play().catch(() => show('播放失败'))
+  playingAudioId.value = a.id
+}
+
+// 字幕编辑
+const subEditVisible = ref(false)
+const subEditId = ref(null)
+const subEditVideoId = ref(null)
+const subEditLabel = ref('')
+const subEditContent = ref('')
+const subSaving = ref(false)
+async function openSubtitleEdit(s) {
+  if (!s) return
+  subEditId.value = s.id
+  subEditVideoId.value = mediaVideo.value?.id
+  subEditLabel.value = s.label || s.language || ''
+  subEditContent.value = ''
+  subEditVisible.value = true
+  try {
+    const r = await get(`/media/${subEditVideoId.value}/subtitles/${s.id}/content`)
+    subEditContent.value = r.content || ''
+  } catch (e) {
+    show('读取字幕内容失败: ' + e.message)
+  }
+}
+async function saveSubtitleEdit() {
+  if (subSaving.value) return
+  if (!subEditContent.value.trim()) return show('字幕内容不能为空')
+  subSaving.value = true
+  try {
+    await put(`/media/${subEditVideoId.value}/subtitles/${subEditId.value}/content`, { content: subEditContent.value })
+    show('字幕已保存')
+    subEditVisible.value = false
+    refreshMedia()
+  } catch (e) {
+    show('保存失败: ' + e.message)
+  } finally {
+    subSaving.value = false
+  }
+}
 
 // HLS 重建进度（音轨字幕对话框内的按钮）
 const hlsRebuilding = ref(false)
@@ -762,6 +892,8 @@ function startHlsProgressPolling(videoId) {
 
 // 关闭音轨字幕对话框时清理（仅清理对话框内轮询，列表状态轮询独立运行）
 function closeMediaModal() {
+  stopAudio()
+  subEditVisible.value = false
   if (hlsProgressTimer) {
     clearInterval(hlsProgressTimer)
     hlsProgressTimer = null

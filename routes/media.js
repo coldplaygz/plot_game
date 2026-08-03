@@ -197,4 +197,57 @@ router.delete('/:videoId/subtitles/:subId', authorize('admin', 'editor'), async 
   }
 });
 
+// 读取字幕文件内容（供编辑）
+router.get('/:videoId/subtitles/:subId/content', authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT file_path, language, hls_playlist_path FROM video_subtitles WHERE id = ? AND video_id = ?',
+      [req.params.subId, req.params.videoId]);
+    if (rows.length === 0) return res.status(404).json({ error: '字幕不存在' });
+    if (!fs.existsSync(rows[0].file_path)) return res.status(404).json({ error: '字幕文件不存在' });
+    const content = fs.readFileSync(rows[0].file_path, 'utf8');
+    res.json({ content, language: rows[0].language, file_path: rows[0].file_path });
+  } catch (err) {
+    console.error('[Media] 读取字幕失败:', err.message);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 保存字幕文件内容（同步 HLS 副本，无需重建）
+router.put('/:videoId/subtitles/:subId/content', authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (typeof content !== 'string' || !content.trim()) {
+      return res.status(400).json({ error: '字幕内容不能为空' });
+    }
+    const [rows] = await pool.query(
+      'SELECT file_path, language, hls_playlist_path FROM video_subtitles WHERE id = ? AND video_id = ?',
+      [req.params.subId, req.params.videoId]);
+    if (rows.length === 0) return res.status(404).json({ error: '字幕不存在' });
+    const sub = rows[0];
+
+    // 确保以 WEBVTT 开头
+    let final = content;
+    if (!/^WEBVTT/.test(final.trim())) final = 'WEBVTT\n\n' + final.trim();
+    if (!final.endsWith('\n')) final += '\n';
+
+    fs.writeFileSync(sub.file_path, final, 'utf8');
+
+    // 同步 HLS 目录副本（若已切片），无需重建即可生效
+    if (sub.hls_playlist_path) {
+      const hlsVtt = sub.hls_playlist_path.replace(/\.m3u8$/i, '.vtt');
+      if (hlsVtt && hlsVtt !== sub.file_path && fs.existsSync(path.dirname(hlsVtt))) {
+        fs.writeFileSync(hlsVtt, final, 'utf8');
+      }
+    }
+
+    const stats = fs.statSync(sub.file_path);
+    await pool.query('UPDATE video_subtitles SET file_size = ? WHERE id = ?', [stats.size, req.params.subId]);
+    res.json({ message: '字幕已保存' });
+  } catch (err) {
+    console.error('[Media] 保存字幕失败:', err.message);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
 module.exports = router;

@@ -387,6 +387,34 @@ router.delete('/:id', authorize('admin', 'editor'), async (req, res) => {
   }
 });
 
+// 批量删除视频（关联场景、选项、音轨、字幕通过外键级联删除）
+router.post('/batch-delete', authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const ids = req.body.ids;
+    if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: '请选择要删除的视频' });
+    const validIds = ids.map(id => parseInt(id)).filter(id => Number.isInteger(id) && id > 0);
+    if (validIds.length === 0) return res.status(400).json({ error: '无效的视频ID' });
+
+    const placeholders = validIds.map(() => '?').join(',');
+    // 查所有视频文件路径 + HLS 目录
+    const [rows] = await pool.query(
+      `SELECT id, file_path, hls_dir FROM videos WHERE id IN (${placeholders})`, validIds
+    );
+    for (const row of rows) {
+      if (fs.existsSync(row.file_path)) { try { fs.unlinkSync(row.file_path); } catch(e) {} }
+      if (row.hls_dir && fs.existsSync(row.hls_dir)) {
+        try { fs.rmSync(row.hls_dir, { recursive: true, force: true }); } catch(e) {}
+      }
+    }
+    // 删除视频（scenes/choices/audios/subtitles 外键级联）
+    const [delResult] = await pool.query(`DELETE FROM videos WHERE id IN (${placeholders})`, validIds);
+    res.json({ message: `已删除 ${delResult.affectedRows} 个视频`, deleted: delResult.affectedRows });
+  } catch (err) {
+    console.error('[Videos] 批量删除失败:', err.message);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
 // 查询 HLS 转码状态（同时返回 transcode_status，供前端列表响应式轮询）
 router.get('/:id/hls-status', async (req, res) => {
   try {
