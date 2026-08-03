@@ -52,6 +52,8 @@ app.use('/uploads', express.static('uploads', {
     } else if (filePath.endsWith('.ts')) {
       res.setHeader('Content-Type', 'video/mp2t');
       res.setHeader('Accept-Ranges', 'bytes');
+      // HLS 分片文件重建后 URL 不变但内容变化，必须验证（否则浏览器用缓存的旧分片）
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     } else if (filePath.endsWith('.mp4')) {
       // 视频文件 MIME + 断点续传
       res.setHeader('Content-Type', 'video/mp4');
