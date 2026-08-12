@@ -13,6 +13,7 @@
         <template v-if="auth.isLoggedIn">
           <span class="text-text-dim hidden sm:inline">{{ auth.user?.nickname || auth.user?.username }}</span>
           <span class="text-text-dimmer text-xs">💎{{ auth.user?.points || 0 }}</span>
+          <router-link to="/leaderboard" class="text-brand-purple hover:text-brand-purple-dark transition-colors">🏆排行榜</router-link>
           <router-link to="/profile" class="text-brand-purple hover:text-brand-purple-dark transition-colors">个人中心</router-link>
           <router-link to="/" class="text-brand-purple hover:text-brand-purple-dark transition-colors">首页</router-link>
           <button @click="handleLogout" class="text-text-dimmest hover:text-red-500 transition-colors">退出</button>

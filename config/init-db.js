@@ -319,6 +319,40 @@ async function initDatabase() {
 
     console.log('[InitDB] 音轨/字幕表创建/确认完成');
 
+    // ============ 18. 道具表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS props (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL COMMENT '道具名称',
+        name_i18n JSON DEFAULT NULL COMMENT '多语言名称 {"en":"Egg","ja":"卵"}',
+        type ENUM('effect','fantasy') NOT NULL DEFAULT 'effect' COMMENT 'effect=效果道具(动画) fantasy=幻想场景道具(播放视频)',
+        icon VARCHAR(10) NOT NULL DEFAULT 'gift' COMMENT '道具图标(emoji)',
+        animation VARCHAR(50) DEFAULT NULL COMMENT '效果动画类型 egg/flower/heart/star/tomato/confetti/firework/coin',
+        video_id INT DEFAULT NULL COMMENT '幻想场景道具关联的视频',
+        scene_id INT DEFAULT NULL COMMENT '绑定的场景(幻想场景道具在该场景才可用,NULL=通用)',
+        point_cost INT NOT NULL DEFAULT 0 COMMENT '使用扣除积分',
+        sort_order INT NOT NULL DEFAULT 0,
+        is_published TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE SET NULL,
+        FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+
+    // ============ 19. 道具使用记录表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS prop_usages (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        prop_id INT NOT NULL,
+        scene_id INT DEFAULT NULL COMMENT '使用时的场景',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (prop_id) REFERENCES props(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('[InitDB] 道具表创建/确认完成');
+
     // ============ 迁移: 为 videos 表添加 HLS 字段 ============
     try {
       const hlsCols = ['hls_master_path', 'hls_dir', 'hls_status'];
@@ -382,8 +416,15 @@ async function initDatabase() {
         await conn.query('ALTER TABLE saves ADD FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL');
         console.log('[InitDB] 已为 saves 表添加 game_id 字段');
       }
+      // props 表添加 scene_id（幻想场景道具绑定到具体场景）
+      const [pCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='props' AND COLUMN_NAME='scene_id'", [dbName]);
+      if (pCols.length === 0) {
+        await conn.query('ALTER TABLE props ADD COLUMN scene_id INT DEFAULT NULL COMMENT "绑定的场景(幻想场景道具在该场景才可用,NULL=通用)" AFTER video_id');
+        await conn.query('ALTER TABLE props ADD FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE');
+        console.log('[InitDB] 已为 props 表添加 scene_id 字段');
+      }
     } catch (e) {
-      console.warn('[InitDB] 迁移 game_id 字段失败 (可能已存在):', e.message);
+      console.warn('[InitDB] 迁移 game_id/scene_id 字段失败 (可能已存在):', e.message);
     }
 
     // 创建默认管理员

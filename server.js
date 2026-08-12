@@ -17,6 +17,7 @@ const configRoutes = require('./routes/config');
 const userRoutes = require('./routes/users');
 const rechargeRoutes = require('./routes/recharge');
 const pointsRoutes = require('./routes/points');
+const propRoutes = require('./routes/props');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -117,6 +118,7 @@ app.use('/api/config', configRoutes); // 系统配置
 app.use('/api/users', userRoutes);    // 用户管理
 app.use('/api/recharge', rechargeRoutes); // 充值管理
 app.use('/api/points', pointsRoutes);  // 积分
+app.use('/api/props', propRoutes);     // 道具
 
 // 404
 app.use((req, res) => res.status(404).json({ error: '接口不存在' }));

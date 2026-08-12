@@ -44,12 +44,24 @@ router.get('/start', async (req, res) => {
   try {
     const gameId = req.query.game_id ? parseInt(req.query.game_id) : null;
 
+    // 指定 game_id 时校验游戏是否已发布
+    if (gameId) {
+      const [gRows] = await pool.query('SELECT id FROM games WHERE id = ? AND is_published = 1', [gameId]);
+      if (gRows.length === 0) {
+        return res.status(404).json({ error: '游戏不存在或未发布' });
+      }
+    }
+
     // 构建查询条件
     let whereClause = 'WHERE s.is_start = 1';
     const params = [];
     if (gameId) {
       whereClause += ' AND s.game_id = ?';
       params.push(gameId);
+    }
+    // 未指定 game_id：只返回已发布游戏的起始场景
+    if (!gameId) {
+      whereClause += ' AND (s.game_id IS NULL OR EXISTS (SELECT 1 FROM games g WHERE g.id = s.game_id AND g.is_published = 1))';
     }
 
     const [rows] = await pool.query(`

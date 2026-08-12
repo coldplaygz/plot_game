@@ -193,6 +193,51 @@
             </div>
           </div>
 
+          <!-- 道具（所有设备显示，面板向上弹出） -->
+          <div class="relative shrink-0">
+            <button @click="showPropPanel = !showPropPanel"
+              class="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/30 active:bg-white/40 transition-colors text-white"
+              title="道具">
+              🎁
+            </button>
+            <div v-if="showPropPanel" class="fixed inset-0 z-40" @click="showPropPanel = false"></div>
+            <div v-if="showPropPanel" class="absolute bottom-full right-0 mb-2 bg-surface-card border border-border-dim rounded-xl overflow-hidden z-50 shadow-xl p-2 w-56 max-h-[70vh] overflow-y-auto">
+              <div class="text-[11px] text-text-dimmer px-2 py-1">🎁 道具（使用扣除积分）</div>
+              <!-- 效果道具组 -->
+              <div v-if="effectProps.length">
+                <div class="text-[10px] text-text-dimmest px-1 pt-1 pb-0.5 flex items-center gap-1">
+                  <span>✨</span><span>效果</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1.5">
+                  <button v-for="p in effectProps" :key="p.id" @click="useProp(p)"
+                    class="flex flex-col items-center justify-center py-2 rounded-lg hover:bg-brand-purple/20 transition-colors border border-transparent hover:border-brand-purple/40"
+                    :title="p.name">
+                    <span class="text-xl leading-none">{{ p.icon }}</span>
+                    <span class="text-[9px] text-text-dim mt-0.5">{{ p.point_cost > 0 ? '💎' + p.point_cost : '免费' }}</span>
+                  </button>
+                </div>
+              </div>
+              <!-- 幻想场景道具组 -->
+              <div v-if="fantasyProps.length">
+                <div class="text-[10px] text-brand-purple/80 px-1 pt-2 pb-0.5 flex items-center gap-1 border-t border-border-dim mt-1">
+                  <span>🎬</span><span>幻想场景</span>
+                </div>
+                <div class="grid grid-cols-3 gap-1.5">
+                  <button v-for="p in fantasyProps" :key="p.id" @click="useProp(p)"
+                    class="flex flex-col items-center justify-center py-2 rounded-lg hover:bg-brand-purple/20 transition-colors border border-brand-purple/30 bg-brand-purple/5"
+                    :title="p.name + '（幻想场景）'">
+                    <span class="text-xl leading-none">{{ p.icon }}</span>
+                    <span class="text-[9px] text-brand-purple mt-0.5">{{ p.point_cost > 0 ? '💎' + p.point_cost : '免费' }}</span>
+                  </button>
+                </div>
+              </div>
+              <!-- 空状态 -->
+              <div v-if="!effectProps.length && !fantasyProps.length" class="text-center py-6 text-[11px] text-text-dimmest">
+                当前场景无可用道具
+              </div>
+            </div>
+          </div>
+
           <!-- 跳过 + 全屏按钮（始终显示，靠右） -->
           <button @click="skipScene"
             class="w-9 h-9 sm:w-9 sm:h-9 flex items-center justify-center rounded-full bg-white/15 hover:bg-white/30 active:bg-white/40 transition-colors text-white shrink-0 ml-auto"
@@ -207,6 +252,42 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══ 效果动画层 ═══ -->
+    <div class="absolute inset-0 z-40 pointer-events-none overflow-hidden" :class="{ 'effect-shake': effectShake }">
+      <div v-for="a in effectAnims" :key="a.id" class="prop-particle"
+        :class="{
+          'prop-confetti': a.shape === 'confetti',
+          'prop-shell': a.shape === 'shell',
+          'prop-yolk': a.shape === 'yolk',
+          'prop-flesh': a.shape === 'flesh'
+        }"
+        :style="{
+          '--x': a.x + 'px', '--y': a.y + 'px',
+          '--tx': a.tx + 'px', '--ty': a.ty + 'px',
+          '--tx2': a.tx2 + 'px', '--ty2': a.ty2 + 'px',
+          '--arc-tx': a.arcTx + 'px', '--arc-ty': a.arcTy + 'px',
+          '--rot': a.rot + 'deg', '--rot2': a.rot2 + 'deg',
+          '--arc-rot': a.arcRot + 'deg',
+          '--scale': a.scale, '--scale2': a.scale2,
+          '--dur': a.dur + 's', '--delay': a.delay + 's',
+          '--end-op': a.endOp, '--anim': 'pp-' + a.anim,
+          '--size': a.size + 'px',
+          left: a.x + 'px', top: a.y + 'px',
+          fontSize: a.size + 'px',
+          color: a.color
+        }">
+        <span v-if="a.shape === 'emoji'" class="prop-icon">{{ a.icon }}</span>
+      </div>
+    </div>
+
+    <!-- ═══ 幻想场景播放器 ═══ -->
+    <div v-if="fantasyPlaying" class="absolute inset-0 z-50 bg-black flex items-center justify-center">
+      <video ref="fantasyVideoEl" class="w-full h-full object-contain" autoplay playsinline @ended="onFantasyEnded"></video>
+      <div class="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-black/60 rounded-full text-xs text-white/80 whitespace-nowrap">
+        🎬 幻想场景 · 播放结束后自动返回
+      </div>
+    </div>
   </div>
 </template>
 
@@ -216,6 +297,9 @@ import { useRoute, useRouter } from 'vue-router'
 import Hls from 'hls.js'
 import { useGameStore } from '../stores/game'
 import { useLangStore } from '../stores/lang'
+import { useAuthStore } from '../stores/auth'
+import { useApi } from '../composables/useApi'
+import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
 import SaveLoadModal from '../components/SaveLoadModal.vue'
 
@@ -224,6 +308,8 @@ const router = useRouter()
 const game = useGameStore()
 const { confirm } = useConfirm()
 const langStore = useLangStore()
+const { get, post } = useApi()
+const toast = useToast()
 
 const rootEl = ref(null)
 const videoEl = ref(null)
@@ -246,6 +332,339 @@ const showGameMenu = ref(false)
 const saveLoadVisible = ref(false)
 const saveLoadMode = ref('save')
 const isMobile = ref(false)
+
+// ═══ 道具系统 ═══
+const propList = ref([])
+const showPropPanel = ref(false)
+// 按类型分组：效果道具(通用)、幻想场景道具(绑定到当前场景)
+const effectProps = computed(() => propList.value.filter(p => p.type !== 'fantasy'))
+const fantasyProps = computed(() => propList.value.filter(p => p.type === 'fantasy'))
+const effectAnims = ref([])  // 粒子数组 { id, x, y, tx, ty, rot, scale, dur, delay, endOp, anim, size, color, icon, shape }
+let animSeq = 0
+const effectShake = ref(false)
+let shakeTimer = null
+const fantasyPlaying = ref(false)
+const fantasyVideoEl = ref(null)
+let fantasyHls = null
+let fantasyResumeAt = 0  // 主视频暂停位置（秒）
+
+const PROP_COLORS = ['#ff6b9d', '#7c3aed', '#f59e0b', '#06b6d4', '#ec4899', '#10b981', '#facc15', '#fb923c', '#22d3ee', '#a78bfa']
+
+function rand(min, max) { return min + Math.random() * (max - min) }
+
+function triggerShake() {
+  effectShake.value = true
+  if (shakeTimer) clearTimeout(shakeTimer)
+  shakeTimer = setTimeout(() => { effectShake.value = false }, 480)
+}
+
+async function loadProps(sceneId) {
+  try {
+    const params = sceneId ? { scene_id: sceneId } : {}
+    const r = await get('/props/available', params)
+    propList.value = r.props || []
+  } catch (e) {}
+}
+
+// 使用道具
+async function useProp(p) {
+  if (!p) return
+  showPropPanel.value = false
+  const cost = p.point_cost || 0
+  if (cost > 0) {
+    const ok = await confirm({
+      title: '使用道具',
+      message: `使用「${p.icon} ${p.name}」将扣除 ${cost} 💎，确定使用吗？`,
+      icon: p.icon,
+      confirmText: '使用',
+      cancelText: '取消'
+    })
+    if (!ok) return
+  }
+  let res
+  try {
+    res = await post('/props/' + p.id + '/use', {
+      scene_id: game.currentScene?.id || null
+    })
+  } catch (e) {
+    if (e.status === 402) {
+      const go = await confirm({
+        title: '积分不足',
+        message: e.message || '积分不足',
+        icon: '💎',
+        confirmText: '去充值',
+        cancelText: '取消'
+      })
+      if (go) router.push('/profile')
+    } else {
+      toast.show(e.message)
+    }
+    return
+  }
+  if (res.error) { toast.show(res.error); return }
+  if (res.points_balance !== undefined) {
+    const auth = useAuthStore()
+    if (auth.user) auth.user.points = res.points_balance
+  }
+  if (p.type === 'fantasy') {
+    playFantasy(res.video)
+  } else {
+    spawnEffect(p)
+  }
+}
+
+// 效果动画（粒子系统）
+function spawnEffect(p) {
+  const el = rootEl.value
+  const w = el ? el.clientWidth : window.innerWidth
+  const h = el ? el.clientHeight : window.innerHeight
+  const cx = Math.round(w * (0.3 + Math.random() * 0.4))
+  const cy = Math.round(h * (0.22 + Math.random() * 0.3))
+  const type = p.animation || 'confetti'
+
+  const push = (opts) => {
+    const id = ++animSeq
+    // 抛物线顶点（55% 处）：x 走到 55%，y 在线性基础上再向上拱起 arc 高度
+    const arc = opts.arc || 0
+    const arcTx = Math.round((opts.tx || 0) * 0.55)
+    const arcTy = Math.round((opts.ty || 0) * 0.55 - arc)
+    const arcRot = Math.round((opts.rot || 0) * 0.5)
+    effectAnims.value.push({
+      id,
+      x: opts.x, y: opts.y,
+      tx: opts.tx || 0, ty: opts.ty || 0,
+      rot: opts.rot || 0, scale: opts.scale || 1,
+      // 预计算轨迹中间点（70% 位置轻微过冲），避免 CSS calc 乘法兼容问题
+      tx2: Math.round((opts.tx || 0) * 0.92),
+      ty2: Math.round((opts.ty || 0) * 0.92),
+      rot2: Math.round((opts.rot || 0) * 0.8),
+      scale2: (opts.scale || 1) * 1.18,
+      // 抛物线顶点（toss 动画专用）
+      arcTx, arcTy, arcRot,
+      dur: opts.dur || 1.2, delay: opts.delay || 0,
+      endOp: opts.endOp ?? 0, anim: opts.anim || 'fly',
+      size: opts.size || 40,
+      color: opts.color || '#ffffff',
+      icon: opts.icon || p.icon,
+      shape: opts.shape || 'emoji'
+    })
+    // 按粒子自身寿命清理（dur + delay + 缓冲），避免长期堆积
+    const lifeMs = ((opts.dur || 1.2) + (opts.delay || 0)) * 1000 + 300
+    setTimeout(() => {
+      effectAnims.value = effectAnims.value.filter(a => a.id !== id)
+    }, lifeMs)
+  }
+
+  const color = PROP_COLORS[Math.floor(Math.random() * PROP_COLORS.length)]
+
+  switch (type) {
+    case 'egg':
+    case 'tomato': {
+      // 投掷：从屏幕底部一侧（左/右随机）抛物线飞向目标点，落地碎裂 + 震屏
+      // 落地坐标 = (cx, cy+100)，碎片从这里飞出，震屏在落地瞬间触发
+      const fromLeft = Math.random() > 0.5
+      const startX = fromLeft ? -50 : w + 50       // 起点：屏幕左/右下角外
+      const startY = h - 40                         // 起点：贴近底部（投掷者位置）
+      const impactX = cx
+      const impactY = cy + 100
+      const tx = impactX - startX                   // 横向位移（投向屏幕中部）
+      const ty = impactY - startY                   // 纵向位移（向上飞）
+      const arc = Math.round(h * 0.28)              // 抛物线顶点高度（屏幕高度的 28%）
+      const rotDir = fromLeft ? 1 : -1              // 旋转方向跟随投掷方向
+      push({
+        x: startX, y: startY,
+        tx, ty, arc,
+        rot: rotDir * 720, scale: 1.15,
+        dur: 0.72, anim: 'toss', endOp: 0, size: 56
+      })
+      setTimeout(() => {
+        // 落地瞬间：震屏 + 碎片四散
+        triggerShake()
+        if (type === 'egg') {
+          // 蛋壳碎片四散
+          for (let i = 0; i < 8; i++) {
+            const ang = Math.random() * Math.PI * 2
+            const dist = rand(70, 200)
+            push({
+              x: impactX, y: impactY, tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
+              rot: rand(-420, 420), scale: rand(0.6, 1.1),
+              dur: rand(0.8, 1.2), delay: rand(0, 0.08),
+              size: rand(14, 24),
+              color: '#fffdf5', shape: 'shell'
+            })
+          }
+          // 蛋液飞溅（带重力感，向下偏）
+          for (let i = 0; i < 6; i++) {
+            const ang = -Math.PI / 2 + rand(-1.2, 1.2)
+            const dist = rand(50, 140)
+            push({
+              x: impactX, y: impactY,
+              tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist + rand(40, 90),
+              rot: rand(-120, 120), scale: rand(0.7, 1.2),
+              dur: rand(0.9, 1.4), delay: rand(0, 0.12),
+              size: rand(10, 18),
+              color: '#ffca28', shape: 'yolk'
+            })
+          }
+        } else {
+          // 番茄：红色果肉碎片
+          for (let i = 0; i < 10; i++) {
+            const ang = Math.random() * Math.PI * 2
+            const dist = rand(60, 190)
+            push({
+              x: impactX, y: impactY, tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
+              rot: rand(-360, 360), scale: rand(0.5, 1),
+              dur: rand(0.7, 1.1), delay: rand(0, 0.1),
+              size: rand(16, 30),
+              color: ['#e53935', '#ef5350', '#c62828', '#ff6f60'][i % 4],
+              shape: 'flesh'
+            })
+          }
+          // 番茄汁液飞溅（更小更亮）
+          for (let i = 0; i < 6; i++) {
+            const ang = -Math.PI / 2 + rand(-1.2, 1.2)
+            const dist = rand(40, 120)
+            push({
+              x: impactX, y: impactY,
+              tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist + rand(30, 70),
+              rot: rand(-100, 100), scale: rand(0.6, 1),
+              dur: rand(0.8, 1.2), delay: rand(0, 0.1),
+              size: rand(8, 14),
+              color: '#ff5252',
+              shape: 'flesh'
+            })
+          }
+        }
+      }, 660)  // 匹配 toss 动画 0.72s 的落地时刻（约 92% 处）
+      break
+    }
+    case 'flower':
+    case 'heart':
+    case 'star': {
+      // 一簇从底部向上飘
+      for (let i = 0; i < 14; i++) {
+        push({
+          x: cx + rand(-50, 50), y: cy + 260,
+          tx: rand(-110, 110), ty: -rand(340, 560),
+          rot: rand(-80, 80), scale: rand(0.6, 1.25),
+          dur: rand(1.5, 2.3), delay: rand(0, 0.3),
+          size: rand(28, 58),
+          color: type === 'flower' ? PROP_COLORS[i % PROP_COLORS.length] : '#ffffff'
+        })
+      }
+      break
+    }
+    case 'confetti': {
+      // 彩色纸屑从顶部撒落
+      for (let i = 0; i < 32; i++) {
+        push({
+          x: rand(w * 0.05, w * 0.95), y: -20,
+          tx: rand(-140, 140), ty: h + 50,
+          rot: rand(-720, 720), scale: 1,
+          dur: rand(1.6, 2.9), delay: rand(0, 0.45),
+          size: 10,
+          color: PROP_COLORS[i % PROP_COLORS.length],
+          shape: 'confetti'
+        })
+      }
+      break
+    }
+    case 'firework': {
+      // 中心绽放 + 光点四散 + 震屏
+      triggerShake()
+      push({ x: cx, y: cy, tx: 0, ty: 0, scale: 0.35, dur: 0.45, anim: 'pop', endOp: 1, size: 26, color: '#ffffff' })
+      setTimeout(() => {
+        for (let i = 0; i < 20; i++) {
+          const ang = (i / 20) * Math.PI * 2 + rand(-0.07, 0.07)
+          const dist = rand(130, 280)
+          push({
+            x: cx, y: cy,
+            tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
+            rot: 0, scale: rand(0.5, 1.05),
+            dur: rand(0.8, 1.4), delay: 0,
+            size: rand(10, 20),
+            color: PROP_COLORS[i % PROP_COLORS.length],
+            anim: 'spark'
+          })
+        }
+      }, 360)
+      break
+    }
+    case 'coin': {
+      // 金币雨
+      triggerShake()
+      for (let i = 0; i < 10; i++) {
+        push({
+          x: cx + rand(-110, 110), y: -40 - i * 45,
+          tx: rand(-60, 60), ty: h * 0.5 + rand(0, 160),
+          rot: rand(-420, 420), scale: rand(0.8, 1.25),
+          dur: rand(1.2, 1.9), delay: rand(0, 0.15),
+          size: rand(32, 48),
+          color: '#facc15'
+        })
+      }
+      break
+    }
+    default: {
+      // 通用爆发
+      for (let i = 0; i < 12; i++) {
+        const ang = Math.random() * Math.PI * 2
+        const dist = rand(80, 220)
+        push({
+          x: cx, y: cy,
+          tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
+          rot: rand(-360, 360), scale: rand(0.6, 1.3),
+          dur: rand(1, 1.8), delay: rand(0, 0.2),
+          size: rand(24, 50), color
+        })
+      }
+    }
+  }
+
+  // 粒子已由 push() 直接推入 effectAnims 并按各自寿命自动清理
+}
+
+// 幻想场景播放
+async function playFantasy(video) {
+  if (!video) { toast.show('幻想场景视频不存在'); return }
+  // 暂停主视频并记录位置
+  const mainVideo = videoEl.value
+  if (mainVideo) {
+    fantasyResumeAt = mainVideo.currentTime || 0
+    mainVideo.pause()
+  }
+  fantasyPlaying.value = true
+  await nextTick()
+  const fv = fantasyVideoEl.value
+  if (!fv) return
+  // 有 HLS 用 hls.js，否则直接 mp4
+  let src = ''
+  if (video.hls_status === 'done' && video.hls_master_path) {
+    src = '/' + video.hls_master_path.replace(/\\/g, '/')
+  } else {
+    src = '/' + (video.file_path || '').replace(/\\/g, '/')
+  }
+  if (Hls.isSupported() && video.hls_status === 'done') {
+    fantasyHls = new Hls({ renderTextTracksNatively: true })
+    fantasyHls.loadSource(src)
+    fantasyHls.attachMedia(fv)
+  } else {
+    fv.src = src
+  }
+  fv.play().catch(() => {})
+}
+
+function onFantasyEnded() {
+  // 销毁幻想 HLS
+  if (fantasyHls) { try { fantasyHls.destroy() } catch(e) {} fantasyHls = null }
+  fantasyPlaying.value = false
+  // 恢复主视频到暂停位置
+  const mainVideo = videoEl.value
+  if (mainVideo) {
+    mainVideo.currentTime = fantasyResumeAt
+    mainVideo.play().catch(() => {})
+  }
+}
 
 // HLS 实例
 let hls = null
@@ -724,7 +1143,11 @@ function unbindVideoEvents(el) {
 }
 
 watch(() => game.currentScene, (newScene) => {
-  if (newScene) nextTick(() => playScene())
+  if (newScene) {
+    nextTick(() => playScene())
+    // 场景切换后重新加载该场景可用道具（按 scene_id 过滤）
+    loadProps(newScene.id)
+  }
 }, { immediate: true })
 
 watch(videoEl, (el, oldEl) => {
@@ -743,6 +1166,7 @@ onMounted(async () => {
   updateMobileDetection()
   window.addEventListener('resize', updateMobileDetection)
   document.addEventListener('fullscreenchange', onFullscreenChange)
+  // 道具加载由 watch(currentScene) 触发，按场景 ID 过滤
   const gameId = route.params.gameId
   if (gameId && !game.currentScene) {
     await game.startNewGame(parseInt(gameId) || gameId)
@@ -756,6 +1180,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   unbindVideoEvents(videoEl.value)
   destroyHls()
+  if (fantasyHls) { try { fantasyHls.destroy() } catch(e) {} fantasyHls = null }
   if (videoEl.value) {
     videoEl.value.pause()
     videoEl.value.src = ''
@@ -768,5 +1193,108 @@ onBeforeUnmount(() => {
 /* 隐藏 hls.js 原生渲染的字幕（我们通过 cuechange 监听自己渲染到 DOM） */
 video::cue {
   visibility: hidden;
+}
+
+/* ═══ 道具效果动画（粒子系统） ═══ */
+.prop-particle {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  line-height: 1;
+  animation: var(--anim) var(--dur) cubic-bezier(0.22, 0.9, 0.35, 1) var(--delay) forwards;
+  will-change: transform, opacity;
+  z-index: 50;
+  text-shadow: 0 0 14px currentColor, 0 0 34px currentColor;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.35));
+  pointer-events: none;
+}
+.prop-icon {
+  display: block;
+  line-height: 1;
+}
+/* 彩色纸屑粒子 */
+.prop-confetti {
+  width: 10px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 1px;
+  box-shadow: 0 0 8px currentColor, 0 0 18px currentColor;
+  font-size: 0 !important;
+}
+/* 蛋壳碎片 */
+.prop-shell {
+  width: var(--size);
+  height: calc(var(--size) * 0.85);
+  background: linear-gradient(135deg, #fffdf5 0%, #f5e9c8 100%);
+  border-radius: 30% 60% 40% 50%;
+  box-shadow: inset 0 0 3px rgba(180, 140, 60, 0.25);
+  font-size: 0 !important;
+}
+/* 蛋液 */
+.prop-yolk {
+  width: calc(var(--size) * 0.8);
+  height: calc(var(--size) * 0.8);
+  background: radial-gradient(circle at 35% 35%, #ffe082 0%, #ffca28 60%, #ffb300 100%);
+  border-radius: 50% 55% 45% 60%;
+  box-shadow: 0 0 12px rgba(255, 193, 7, 0.7), 0 0 24px rgba(255, 193, 7, 0.35);
+  font-size: 0 !important;
+}
+/* 番茄果肉碎片（颜色由 currentColor 控制） */
+.prop-flesh {
+  width: var(--size);
+  height: calc(var(--size) * 0.9);
+  background: radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.55) 0%, currentColor 55%, rgba(0, 0, 0, 0.15) 100%);
+  border-radius: 45% 55% 60% 40%;
+  box-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+  font-size: 0 !important;
+}
+
+/* 通用飞行动画：从起点位移到 (--tx, --ty)，70% 处轻微过冲 */
+@keyframes pp-fly {
+  0%   { transform: translate(-50%, -50%) scale(0.3) rotate(0deg); opacity: 0; }
+  12%  { opacity: 1; }
+  70%  { transform: translate(calc(-50% + var(--tx2)), calc(-50% + var(--ty2))) scale(var(--scale2)) rotate(var(--rot2)); opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(var(--scale)) rotate(var(--rot)); opacity: var(--end-op); }
+}
+/* 砸落：更快的进场 + 高速旋转 + 拖影 */
+@keyframes pp-throw {
+  0%   { transform: translate(-50%, -50%) scale(0.5) rotate(0deg); opacity: 0; }
+  6%   { opacity: 1; }
+  60%  { transform: translate(calc(-50% + var(--tx2)), calc(-50% + var(--ty2))) scale(var(--scale2)) rotate(var(--rot2)); opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(var(--scale)) rotate(var(--rot)); opacity: var(--end-op); }
+}
+/* 投掷：从一侧抛物线飞向目标，55% 处到达顶点（y 向上拱起 arc） */
+@keyframes pp-toss {
+  0%   { transform: translate(-50%, -50%) scale(0.65) rotate(0deg); opacity: 0; }
+  8%   { opacity: 1; }
+  /* 抛物线顶点：x 走到 55%，y 在线性基础上向上拱起 arc 高度 */
+  55%  { transform: translate(calc(-50% + var(--arc-tx)), calc(-50% + var(--arc-ty))) scale(1.18) rotate(var(--arc-rot)); opacity: 1; }
+  92%  { transform: translate(calc(-50% + var(--tx) * 0.98), calc(-50% + var(--ty) * 0.98)) scale(1.15) rotate(calc(var(--rot) * 0.95)); opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(var(--scale)) rotate(var(--rot)); opacity: var(--end-op); }
+}
+/* 烟花中心爆闪 */
+@keyframes pp-pop {
+  0%   { transform: translate(-50%, -50%) scale(0.2); opacity: 1; }
+  60%  { transform: translate(-50%, -50%) scale(1.6); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+}
+/* 烟花光点：直线四散 + 拉长发光 */
+@keyframes pp-spark {
+  0%   { transform: translate(-50%, -50%) scale(0.8); opacity: 1; }
+  25%  { opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(var(--scale)); opacity: 0; }
+}
+
+/* 屏幕震动 */
+.effect-shake {
+  animation: screen-shake 0.45s ease-out;
+}
+@keyframes screen-shake {
+  0%   { transform: translate(0, 0); }
+  15%  { transform: translate(-8px, 5px); }
+  30%  { transform: translate(7px, -6px); }
+  45%  { transform: translate(-6px, -4px); }
+  60%  { transform: translate(5px, 6px); }
+  75%  { transform: translate(-3px, 2px); }
+  100% { transform: translate(0, 0); }
 }
 </style>
