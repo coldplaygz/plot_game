@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { authenticate, authorize } = require('../middleware/auth');
+const { deductPoints } = require('../services/pointsService');
 
 const router = express.Router();
 
@@ -203,27 +204,17 @@ router.post('/:id/use', authenticate, async (req, res) => {
       }
     }
 
-    // 扣积分
-    const [userRows] = await pool.query('SELECT points FROM users WHERE id = ?', [userId]);
-    if (userRows.length === 0) return res.status(404).json({ error: '用户不存在' });
-    const currentPoints = userRows[0].points;
-
+    // 扣积分（使用统一 service）
     if (prop.point_cost > 0) {
-      if (currentPoints < prop.point_cost) {
+      const result = await deductPoints(userId, prop.point_cost, 'prop', prop.id, `使用道具: ${prop.name}`);
+      if (!result.success) {
         return res.status(402).json({
           error: '积分不足',
-          required: prop.point_cost,
-          current: currentPoints,
-          message: `使用「${prop.name}」需要 ${prop.point_cost} 积分，当前余额 ${currentPoints} 积分`
+          required: result.required,
+          current: result.current,
+          message: `使用「${prop.name}」需要 ${prop.point_cost} 积分，当前余额 ${result.current} 积分`
         });
       }
-      const newBalance = currentPoints - prop.point_cost;
-      await pool.query('UPDATE users SET points = ? WHERE id = ?', [newBalance, userId]);
-      await pool.query(
-        `INSERT INTO points_log (user_id, operator_id, points, type, ref_id, balance, remark)
-         VALUES (?, NULL, ?, 'choice', ?, ?, ?)`,
-        [userId, -prop.point_cost, prop.id, newBalance, `使用道具: ${prop.name}`]
-      );
     }
 
     // 记录使用

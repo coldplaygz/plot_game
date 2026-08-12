@@ -301,6 +301,9 @@ import { useAuthStore } from '../stores/auth'
 import { useApi } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 import { useConfirm } from '../composables/useConfirm'
+import { useParticleSystem } from '../composables/game/useParticleSystem'
+import { useFantasyPlayer } from '../composables/game/useFantasyPlayer'
+import { useMobileDetection } from '../composables/game/useMobileDetection'
 import SaveLoadModal from '../components/SaveLoadModal.vue'
 
 const route = useRoute()
@@ -314,6 +317,15 @@ const toast = useToast()
 const rootEl = ref(null)
 const videoEl = ref(null)
 const progressBarEl = ref(null)
+
+// ═══ Composable: 粒子动画 ═══
+const { effectAnims, effectShake, triggerShake, spawnEffect, cleanup: cleanupParticles } = useParticleSystem(rootEl)
+
+// ═══ Composable: 幻想场景 ═══
+const { fantasyPlaying, fantasyVideoEl, playFantasy, onFantasyEnded, cleanup: cleanupFantasy } = useFantasyPlayer(videoEl, toast)
+
+// ═══ Composable: 移动端检测 ═══
+const { isMobile, updateMobileDetection } = useMobileDetection()
 
 // 播放状态
 const isPlaying = ref(false)
@@ -331,7 +343,6 @@ const showSpeedMenu = ref(false)
 const showGameMenu = ref(false)
 const saveLoadVisible = ref(false)
 const saveLoadMode = ref('save')
-const isMobile = ref(false)
 
 // ═══ 道具系统 ═══
 const propList = ref([])
@@ -339,24 +350,6 @@ const showPropPanel = ref(false)
 // 按类型分组：效果道具(通用)、幻想场景道具(绑定到当前场景)
 const effectProps = computed(() => propList.value.filter(p => p.type !== 'fantasy'))
 const fantasyProps = computed(() => propList.value.filter(p => p.type === 'fantasy'))
-const effectAnims = ref([])  // 粒子数组 { id, x, y, tx, ty, rot, scale, dur, delay, endOp, anim, size, color, icon, shape }
-let animSeq = 0
-const effectShake = ref(false)
-let shakeTimer = null
-const fantasyPlaying = ref(false)
-const fantasyVideoEl = ref(null)
-let fantasyHls = null
-let fantasyResumeAt = 0  // 主视频暂停位置（秒）
-
-const PROP_COLORS = ['#ff6b9d', '#7c3aed', '#f59e0b', '#06b6d4', '#ec4899', '#10b981', '#facc15', '#fb923c', '#22d3ee', '#a78bfa']
-
-function rand(min, max) { return min + Math.random() * (max - min) }
-
-function triggerShake() {
-  effectShake.value = true
-  if (shakeTimer) clearTimeout(shakeTimer)
-  shakeTimer = setTimeout(() => { effectShake.value = false }, 480)
-}
 
 async function loadProps(sceneId) {
   try {
@@ -413,258 +406,8 @@ async function useProp(p) {
   }
 }
 
-// 效果动画（粒子系统）
-function spawnEffect(p) {
-  const el = rootEl.value
-  const w = el ? el.clientWidth : window.innerWidth
-  const h = el ? el.clientHeight : window.innerHeight
-  const cx = Math.round(w * (0.3 + Math.random() * 0.4))
-  const cy = Math.round(h * (0.22 + Math.random() * 0.3))
-  const type = p.animation || 'confetti'
-
-  const push = (opts) => {
-    const id = ++animSeq
-    // 抛物线顶点（55% 处）：x 走到 55%，y 在线性基础上再向上拱起 arc 高度
-    const arc = opts.arc || 0
-    const arcTx = Math.round((opts.tx || 0) * 0.55)
-    const arcTy = Math.round((opts.ty || 0) * 0.55 - arc)
-    const arcRot = Math.round((opts.rot || 0) * 0.5)
-    effectAnims.value.push({
-      id,
-      x: opts.x, y: opts.y,
-      tx: opts.tx || 0, ty: opts.ty || 0,
-      rot: opts.rot || 0, scale: opts.scale || 1,
-      // 预计算轨迹中间点（70% 位置轻微过冲），避免 CSS calc 乘法兼容问题
-      tx2: Math.round((opts.tx || 0) * 0.92),
-      ty2: Math.round((opts.ty || 0) * 0.92),
-      rot2: Math.round((opts.rot || 0) * 0.8),
-      scale2: (opts.scale || 1) * 1.18,
-      // 抛物线顶点（toss 动画专用）
-      arcTx, arcTy, arcRot,
-      dur: opts.dur || 1.2, delay: opts.delay || 0,
-      endOp: opts.endOp ?? 0, anim: opts.anim || 'fly',
-      size: opts.size || 40,
-      color: opts.color || '#ffffff',
-      icon: opts.icon || p.icon,
-      shape: opts.shape || 'emoji'
-    })
-    // 按粒子自身寿命清理（dur + delay + 缓冲），避免长期堆积
-    const lifeMs = ((opts.dur || 1.2) + (opts.delay || 0)) * 1000 + 300
-    setTimeout(() => {
-      effectAnims.value = effectAnims.value.filter(a => a.id !== id)
-    }, lifeMs)
-  }
-
-  const color = PROP_COLORS[Math.floor(Math.random() * PROP_COLORS.length)]
-
-  switch (type) {
-    case 'egg':
-    case 'tomato': {
-      // 投掷：从屏幕底部一侧（左/右随机）抛物线飞向目标点，落地碎裂 + 震屏
-      // 落地坐标 = (cx, cy+100)，碎片从这里飞出，震屏在落地瞬间触发
-      const fromLeft = Math.random() > 0.5
-      const startX = fromLeft ? -50 : w + 50       // 起点：屏幕左/右下角外
-      const startY = h - 40                         // 起点：贴近底部（投掷者位置）
-      const impactX = cx
-      const impactY = cy + 100
-      const tx = impactX - startX                   // 横向位移（投向屏幕中部）
-      const ty = impactY - startY                   // 纵向位移（向上飞）
-      const arc = Math.round(h * 0.28)              // 抛物线顶点高度（屏幕高度的 28%）
-      const rotDir = fromLeft ? 1 : -1              // 旋转方向跟随投掷方向
-      push({
-        x: startX, y: startY,
-        tx, ty, arc,
-        rot: rotDir * 720, scale: 1.15,
-        dur: 0.72, anim: 'toss', endOp: 0, size: 56
-      })
-      setTimeout(() => {
-        // 落地瞬间：震屏 + 碎片四散
-        triggerShake()
-        if (type === 'egg') {
-          // 蛋壳碎片四散
-          for (let i = 0; i < 8; i++) {
-            const ang = Math.random() * Math.PI * 2
-            const dist = rand(70, 200)
-            push({
-              x: impactX, y: impactY, tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
-              rot: rand(-420, 420), scale: rand(0.6, 1.1),
-              dur: rand(0.8, 1.2), delay: rand(0, 0.08),
-              size: rand(14, 24),
-              color: '#fffdf5', shape: 'shell'
-            })
-          }
-          // 蛋液飞溅（带重力感，向下偏）
-          for (let i = 0; i < 6; i++) {
-            const ang = -Math.PI / 2 + rand(-1.2, 1.2)
-            const dist = rand(50, 140)
-            push({
-              x: impactX, y: impactY,
-              tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist + rand(40, 90),
-              rot: rand(-120, 120), scale: rand(0.7, 1.2),
-              dur: rand(0.9, 1.4), delay: rand(0, 0.12),
-              size: rand(10, 18),
-              color: '#ffca28', shape: 'yolk'
-            })
-          }
-        } else {
-          // 番茄：红色果肉碎片
-          for (let i = 0; i < 10; i++) {
-            const ang = Math.random() * Math.PI * 2
-            const dist = rand(60, 190)
-            push({
-              x: impactX, y: impactY, tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
-              rot: rand(-360, 360), scale: rand(0.5, 1),
-              dur: rand(0.7, 1.1), delay: rand(0, 0.1),
-              size: rand(16, 30),
-              color: ['#e53935', '#ef5350', '#c62828', '#ff6f60'][i % 4],
-              shape: 'flesh'
-            })
-          }
-          // 番茄汁液飞溅（更小更亮）
-          for (let i = 0; i < 6; i++) {
-            const ang = -Math.PI / 2 + rand(-1.2, 1.2)
-            const dist = rand(40, 120)
-            push({
-              x: impactX, y: impactY,
-              tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist + rand(30, 70),
-              rot: rand(-100, 100), scale: rand(0.6, 1),
-              dur: rand(0.8, 1.2), delay: rand(0, 0.1),
-              size: rand(8, 14),
-              color: '#ff5252',
-              shape: 'flesh'
-            })
-          }
-        }
-      }, 660)  // 匹配 toss 动画 0.72s 的落地时刻（约 92% 处）
-      break
-    }
-    case 'flower':
-    case 'heart':
-    case 'star': {
-      // 一簇从底部向上飘
-      for (let i = 0; i < 14; i++) {
-        push({
-          x: cx + rand(-50, 50), y: cy + 260,
-          tx: rand(-110, 110), ty: -rand(340, 560),
-          rot: rand(-80, 80), scale: rand(0.6, 1.25),
-          dur: rand(1.5, 2.3), delay: rand(0, 0.3),
-          size: rand(28, 58),
-          color: type === 'flower' ? PROP_COLORS[i % PROP_COLORS.length] : '#ffffff'
-        })
-      }
-      break
-    }
-    case 'confetti': {
-      // 彩色纸屑从顶部撒落
-      for (let i = 0; i < 32; i++) {
-        push({
-          x: rand(w * 0.05, w * 0.95), y: -20,
-          tx: rand(-140, 140), ty: h + 50,
-          rot: rand(-720, 720), scale: 1,
-          dur: rand(1.6, 2.9), delay: rand(0, 0.45),
-          size: 10,
-          color: PROP_COLORS[i % PROP_COLORS.length],
-          shape: 'confetti'
-        })
-      }
-      break
-    }
-    case 'firework': {
-      // 中心绽放 + 光点四散 + 震屏
-      triggerShake()
-      push({ x: cx, y: cy, tx: 0, ty: 0, scale: 0.35, dur: 0.45, anim: 'pop', endOp: 1, size: 26, color: '#ffffff' })
-      setTimeout(() => {
-        for (let i = 0; i < 20; i++) {
-          const ang = (i / 20) * Math.PI * 2 + rand(-0.07, 0.07)
-          const dist = rand(130, 280)
-          push({
-            x: cx, y: cy,
-            tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
-            rot: 0, scale: rand(0.5, 1.05),
-            dur: rand(0.8, 1.4), delay: 0,
-            size: rand(10, 20),
-            color: PROP_COLORS[i % PROP_COLORS.length],
-            anim: 'spark'
-          })
-        }
-      }, 360)
-      break
-    }
-    case 'coin': {
-      // 金币雨
-      triggerShake()
-      for (let i = 0; i < 10; i++) {
-        push({
-          x: cx + rand(-110, 110), y: -40 - i * 45,
-          tx: rand(-60, 60), ty: h * 0.5 + rand(0, 160),
-          rot: rand(-420, 420), scale: rand(0.8, 1.25),
-          dur: rand(1.2, 1.9), delay: rand(0, 0.15),
-          size: rand(32, 48),
-          color: '#facc15'
-        })
-      }
-      break
-    }
-    default: {
-      // 通用爆发
-      for (let i = 0; i < 12; i++) {
-        const ang = Math.random() * Math.PI * 2
-        const dist = rand(80, 220)
-        push({
-          x: cx, y: cy,
-          tx: Math.cos(ang) * dist, ty: Math.sin(ang) * dist,
-          rot: rand(-360, 360), scale: rand(0.6, 1.3),
-          dur: rand(1, 1.8), delay: rand(0, 0.2),
-          size: rand(24, 50), color
-        })
-      }
-    }
-  }
-
-  // 粒子已由 push() 直接推入 effectAnims 并按各自寿命自动清理
-}
-
-// 幻想场景播放
-async function playFantasy(video) {
-  if (!video) { toast.show('幻想场景视频不存在'); return }
-  // 暂停主视频并记录位置
-  const mainVideo = videoEl.value
-  if (mainVideo) {
-    fantasyResumeAt = mainVideo.currentTime || 0
-    mainVideo.pause()
-  }
-  fantasyPlaying.value = true
-  await nextTick()
-  const fv = fantasyVideoEl.value
-  if (!fv) return
-  // 有 HLS 用 hls.js，否则直接 mp4
-  let src = ''
-  if (video.hls_status === 'done' && video.hls_master_path) {
-    src = '/' + video.hls_master_path.replace(/\\/g, '/')
-  } else {
-    src = '/' + (video.file_path || '').replace(/\\/g, '/')
-  }
-  if (Hls.isSupported() && video.hls_status === 'done') {
-    fantasyHls = new Hls({ renderTextTracksNatively: true })
-    fantasyHls.loadSource(src)
-    fantasyHls.attachMedia(fv)
-  } else {
-    fv.src = src
-  }
-  fv.play().catch(() => {})
-}
-
-function onFantasyEnded() {
-  // 销毁幻想 HLS
-  if (fantasyHls) { try { fantasyHls.destroy() } catch(e) {} fantasyHls = null }
-  fantasyPlaying.value = false
-  // 恢复主视频到暂停位置
-  const mainVideo = videoEl.value
-  if (mainVideo) {
-    mainVideo.currentTime = fantasyResumeAt
-    mainVideo.play().catch(() => {})
-  }
-}
+// spawnEffect 已移至 composables/game/useParticleSystem.js
+// playFantasy / onFantasyEnded 已移至 composables/game/useFantasyPlayer.js
 
 // HLS 实例
 let hls = null
@@ -689,14 +432,6 @@ const progressPercent = computed(() => {
   if (!videoDuration.value) return 0
   return Math.min(100, Math.max(0, (videoCurrentTime.value / videoDuration.value) * 100))
 })
-
-// ═══════════════════════════════════════════════════════════════
-// 移动端检测
-// ═══════════════════════════════════════════════════════════════
-function updateMobileDetection() {
-  isMobile.value = window.innerWidth < 768 ||
-    ('ontouchstart' in window && window.matchMedia('(pointer: coarse)').matches)
-}
 
 // ═══════════════════════════════════════════════════════════════
 // HLS 加载（照搬 hls-test 的标准实现）
@@ -1163,8 +898,6 @@ function onFullscreenChange() {
 }
 
 onMounted(async () => {
-  updateMobileDetection()
-  window.addEventListener('resize', updateMobileDetection)
   document.addEventListener('fullscreenchange', onFullscreenChange)
   // 道具加载由 watch(currentScene) 触发，按场景 ID 过滤
   const gameId = route.params.gameId
@@ -1176,11 +909,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   playRequestId++
-  window.removeEventListener('resize', updateMobileDetection)
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   unbindVideoEvents(videoEl.value)
   destroyHls()
-  if (fantasyHls) { try { fantasyHls.destroy() } catch(e) {} fantasyHls = null }
+  cleanupFantasy()
+  cleanupParticles()
   if (videoEl.value) {
     videoEl.value.pause()
     videoEl.value.src = ''

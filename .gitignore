@@ -1,5 +1,6 @@
 node_modules/
 uploads/videos/*
+uploads/media/*
 !uploads/videos/.gitkeep
 test_videos/
 .env.prod

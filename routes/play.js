@@ -5,6 +5,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
+const { deductPoints } = require('../services/pointsService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -230,29 +231,17 @@ router.post('/choose', async (req, res) => {
     const choice = choices[0];
     const pointCost = choice.point_cost || 0;
 
-    // 积分检查与扣除
+    // 积分检查与扣除（使用统一 service）
     if (pointCost > 0) {
-      const [userRows] = await pool.query('SELECT points FROM users WHERE id = ?', [userId]);
-      if (userRows.length === 0) return res.status(404).json({ error: '用户不存在' });
-
-      const currentPoints = userRows[0].points;
-      if (currentPoints < pointCost) {
+      const result = await deductPoints(userId, pointCost, 'choice', choice.id, `选项消耗: ${choice.text}`);
+      if (!result.success) {
         return res.status(402).json({
           error: '积分不足',
-          required: pointCost,
-          current: currentPoints,
-          message: `需要 ${pointCost} 积分，当前余额 ${currentPoints} 积分`
+          required: result.required,
+          current: result.current,
+          message: result.message
         });
       }
-
-      const newBalance = currentPoints - pointCost;
-      await pool.query('UPDATE users SET points = ? WHERE id = ?', [newBalance, userId]);
-
-      await pool.query(
-        `INSERT INTO points_log (user_id, operator_id, points, type, ref_id, balance, remark)
-         VALUES (?, NULL, ?, 'choice', ?, ?, ?)`,
-        [userId, -pointCost, choice.id, newBalance, `选项消耗: ${choice.text}`]
-      );
     }
 
     // 计算好感度变化

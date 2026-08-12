@@ -272,7 +272,7 @@ async function initDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
         points INT NOT NULL COMMENT '变动积分(正=获得,负=消费)',
-        type ENUM('recharge','choice','admin','refund') NOT NULL,
+        type ENUM('recharge','choice','admin','refund','prop') NOT NULL,
         ref_id INT DEFAULT NULL COMMENT '关联ID(choice_id/recharge_id等)',
         balance INT NOT NULL COMMENT '变动后余额',
         remark VARCHAR(255) DEFAULT NULL,
@@ -425,6 +425,28 @@ async function initDatabase() {
       }
     } catch (e) {
       console.warn('[InitDB] 迁移 game_id/scene_id 字段失败 (可能已存在):', e.message);
+    }
+
+    // ============ 迁移: 修正 props.type 枚举值（独立 try-catch，避免被前一步外键失败阻断） ============
+    try {
+      const [pTypeRows] = await conn.query("SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='props' AND COLUMN_NAME='type'", [dbName]);
+      if (pTypeRows.length > 0 && !pTypeRows[0].COLUMN_TYPE.includes('fantasy')) {
+        await conn.query("ALTER TABLE props MODIFY COLUMN type ENUM('effect','fantasy') NOT NULL DEFAULT 'effect' COMMENT 'effect=效果道具(动画) fantasy=幻想场景道具(播放视频)'");
+        console.log('[InitDB] 已修正 props.type 枚举值（添加 fantasy）');
+      }
+    } catch (e) {
+      console.warn('[InitDB] 修正 props.type 枚举值失败:', e.message);
+    }
+
+    // ============ 迁移: 修正 points_log.type 枚举值（添加 'prop' 用于道具消耗） ============
+    try {
+      const [plTypeRows] = await conn.query("SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='points_log' AND COLUMN_NAME='type'", [dbName]);
+      if (plTypeRows.length > 0 && !plTypeRows[0].COLUMN_TYPE.includes('prop')) {
+        await conn.query("ALTER TABLE points_log MODIFY COLUMN type ENUM('recharge','choice','admin','refund','prop') NOT NULL");
+        console.log('[InitDB] 已修正 points_log.type 枚举值（添加 prop）');
+      }
+    } catch (e) {
+      console.warn('[InitDB] 修正 points_log.type 枚举值失败:', e.message);
     }
 
     // 创建默认管理员

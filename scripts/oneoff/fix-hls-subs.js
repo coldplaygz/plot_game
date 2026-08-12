@@ -1,7 +1,8 @@
-// fix-hls-subs.js — 直接复制字幕 VTT + 手动 regenMaster
+// 一次性修复脚本 — 直接复制字幕 VTT + 手动 regenMaster
+// 注意：已归档，hls-transcode.js 已重构为增量重建模式
 const fs = require('fs');
 const path = require('path');
-const pool = require('./config/db');
+const pool = require('../../config/db');
 
 function buildMasterPlaylist(audios, subs, bandwidth) {
   const bw = Math.max(parseInt(bandwidth) || 1500000, 500000);
@@ -34,7 +35,6 @@ function buildMasterPlaylist(audios, subs, bandwidth) {
     if (!fs.existsSync(hlsDir)) { console.log(`Video ${vid}: HLS目录不存在`); continue; }
 
     const [subs] = await pool.query('SELECT * FROM video_subtitles WHERE video_id = ?', [vid]);
-    // 复制所有未 done 的字幕
     for (const sub of subs) {
       if (sub.hls_status === 'done') continue;
       if (!fs.existsSync(sub.file_path)) {
@@ -48,12 +48,11 @@ function buildMasterPlaylist(audios, subs, bandwidth) {
       console.log(`  v${vid} ${sub.language}: done`);
     }
 
-    // regenMaster
     const [audios] = await pool.query('SELECT * FROM video_audios WHERE video_id = ?', [vid]);
     const [doneSubs] = await pool.query('SELECT * FROM video_subtitles WHERE video_id = ? AND hls_status=?', [vid, 'done']);
     const content = buildMasterPlaylist(audios, doneSubs, 1500000);
     fs.writeFileSync(path.join(hlsDir, 'master.m3u8'), content, 'utf8');
-    console.log(`Video ${vid}: master.m3u8 已更新 (${audios.filter(a=>a.hls_status==='done').length}音轨, ${doneSubs.length}字幕)`);
+    console.log(`Video ${vid}: master.m3u8 已更新`);
   }
 
   pool.end();

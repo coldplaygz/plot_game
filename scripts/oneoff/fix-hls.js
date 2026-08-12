@@ -1,9 +1,9 @@
-// fix-hls.js — 修复 HLS 音轨/字幕
-const { addSubtitleHLS } = require('./utils/hls-transcode');
-const pool = require('./config/db');
+// 一次性修复脚本 — 修复 HLS 音轨/字幕
+// 注意：已归档，hls-transcode.js 已重构为增量重建模式
+const { addSubtitleHLS } = require('../../utils/hls-transcode');
+const pool = require('../../config/db');
 
 (async () => {
-  // 按视频逐个处理，等每个视频的锁释放
   for (const vid of [64, 63]) {
     const [subs] = await pool.query(
       'SELECT id, language FROM video_subtitles WHERE video_id = ? AND hls_status != ?',
@@ -16,10 +16,8 @@ const pool = require('./config/db');
     console.log(`Video ${vid}: 处理 ${subs.length} 个字幕...`);
     for (const s of subs) {
       console.log(`  字幕 ${s.language} (#${s.id})...`);
-      // addSubtitleHLS 是异步的，需要等它完成
       await new Promise((resolve) => {
         addSubtitleHLS(vid, s.id);
-        // 轮询检查状态
         const check = setInterval(async () => {
           const [rows] = await pool.query(
             'SELECT hls_status FROM video_subtitles WHERE id = ?', [s.id]
@@ -30,7 +28,6 @@ const pool = require('./config/db');
             resolve();
           }
         }, 500);
-        // 超时 30s
         setTimeout(() => { clearInterval(check); console.log('    -> timeout'); resolve(); }, 30000);
       });
     }

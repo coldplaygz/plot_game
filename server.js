@@ -4,10 +4,8 @@ const path = require('path');
 require('dotenv').config();
 
 const authRoutes = require('./routes/auth');
-const characterRoutes = require('./routes/characters');
 const sceneRoutes = require('./routes/scenes');
 const choiceRoutes = require('./routes/choices');
-const endingRoutes = require('./routes/endings');  // 已移除结局模块
 const videoRoutes = require('./routes/videos');
 const saveRoutes = require('./routes/saves');
 const playRoutes = require('./routes/play');
@@ -18,6 +16,8 @@ const userRoutes = require('./routes/users');
 const rechargeRoutes = require('./routes/recharge');
 const pointsRoutes = require('./routes/points');
 const propRoutes = require('./routes/props');
+
+const { uploadHeaders, spaHeaders } = require('./config/static');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -45,43 +45,14 @@ app.use(cors());
 app.use('/uploads', express.static('uploads', {
   maxAge: '365d',
   immutable: true,
-  setHeaders: (res, filePath) => {
-    // HLS 流媒体 MIME
-    if (filePath.endsWith('.m3u8')) {
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      res.setHeader('Cache-Control', 'no-cache');
-    } else if (filePath.endsWith('.ts')) {
-      res.setHeader('Content-Type', 'video/mp2t');
-      res.setHeader('Accept-Ranges', 'bytes');
-      // HLS 分片文件重建后 URL 不变但内容变化，必须验证（否则浏览器用缓存的旧分片）
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
-    } else if (filePath.endsWith('.mp4')) {
-      // 视频文件 MIME + 断点续传
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Accept-Ranges', 'bytes');
-    } else if (filePath.endsWith('.webm')) {
-      res.setHeader('Content-Type', 'video/webm');
-      res.setHeader('Accept-Ranges', 'bytes');
-    } else if (filePath.endsWith('.mov')) {
-      res.setHeader('Content-Type', 'video/quicktime');
-      res.setHeader('Accept-Ranges', 'bytes');
-    } else if (filePath.endsWith('.mp3') || filePath.endsWith('.m4a')) {
-      res.setHeader('Content-Type', 'audio/mpeg');
-    } else if (filePath.endsWith('.vtt')) {
-      res.setHeader('Content-Type', 'text/vtt');
-    }
-  }
+  setHeaders: uploadHeaders
 }));
 
 // Vue 前端 SPA (生产构建产物)
 // 缓存策略：hash 资源长期缓存，index.html 不缓存
 app.use('/assets', express.static(path.join(__dirname, 'client/dist/assets'), { maxAge: '365d', immutable: true }));
 app.use(express.static(path.join(__dirname, 'client/dist'), {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('index.html')) {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    }
-  }
+  setHeaders: spaHeaders
 }));
 
 // HLS 对比测试页（照搬 hls.js demo 实现，用于对比验证音轨切换）
@@ -105,10 +76,8 @@ app.get('/api/health', (req, res) => {
 
 // API 路由
 app.use('/api/auth', authRoutes);
-// app.use('/api/characters', characterRoutes);  // 已移除角色模块
 app.use('/api/scenes', sceneRoutes);
 app.use('/api/choices', choiceRoutes);
-// app.use('/api/endings', endingRoutes);  // 已移除结局模块
 app.use('/api/videos', videoRoutes);
 app.use('/api/saves', saveRoutes);
 app.use('/api/play', playRoutes);

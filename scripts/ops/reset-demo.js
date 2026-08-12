@@ -1,6 +1,6 @@
 /**
- * 清除旧乱码数据，重建完整 Demo
- * 直接用 Node.js 写入，确保 UTF-8 正确
+ * Demo 数据重建脚本（调用 API）
+ * 用法: cd 项目根目录 && node scripts/ops/reset-demo.js
  */
 const http = require('http');
 
@@ -17,7 +17,6 @@ function api(method, path, data, isFormData) {
     if (TOKEN) options.headers['Authorization'] = 'Bearer ' + TOKEN;
 
     if (isFormData) {
-      // multipart handled separately
       resolve(null);
       return;
     }
@@ -86,15 +85,12 @@ async function uploadFile(path, fieldName, filePath, extraFields) {
 }
 
 async function main() {
-  // 1. 登录
   console.log('[1] 登录...');
   const login = await api('POST', '/api/auth/login', { username: 'admin', password: 'admin123' });
   TOKEN = login.token;
   console.log('   TOKEN:', TOKEN ? 'OK' : 'FAILED');
 
-  // 2. 清除旧数据（从依赖表开始）
   console.log('[2] 清除旧数据...');
-  // 简单粗暴：删表重建
   const mysql = require('mysql2/promise');
   const conn = await mysql.createConnection({
     host: '192.168.9.2', user: 'root', password: '123456',
@@ -110,7 +106,6 @@ async function main() {
   await conn.query('DELETE FROM scenes');
   await conn.query('DELETE FROM videos');
   await conn.query('DELETE FROM endings');
-  // characters 保留（init-db时已创建）
   await conn.query('ALTER TABLE characters AUTO_INCREMENT = 1');
   await conn.query('ALTER TABLE videos AUTO_INCREMENT = 1');
   await conn.query('ALTER TABLE scenes AUTO_INCREMENT = 1');
@@ -118,7 +113,6 @@ async function main() {
   await conn.query('ALTER TABLE endings AUTO_INCREMENT = 1');
   console.log('   旧数据已清除');
 
-  // Re-create characters (in case they were deleted)
   const [chars] = await conn.query('SELECT COUNT(*) as cnt FROM characters');
   if (chars[0].cnt === 0) {
     const ch = [
@@ -136,14 +130,12 @@ async function main() {
   }
   await conn.end();
 
-  // 3. 创建结局
   console.log('[3] 创建结局...');
   const e1 = await api('POST', '/api/endings', { title: '图书馆的约定', description: '和林雨晴在图书馆共度安静的午后，两颗心慢慢靠近...', type: 'good', character_id: 1 });
   const e2 = await api('POST', '/api/endings', { title: '操场上的心跳', description: '赵小曼的笑声回荡在操场上，青春的汗水与心动交织。', type: 'normal', character_id: 3 });
   const e3 = await api('POST', '/api/endings', { title: '咖啡馆的偶遇', description: '苏若雪对你露出了难得一见的微笑，冰山融化了。', type: 'perfect', character_id: 2 });
   console.log('   E1=', e1.ending.id, 'E2=', e2.ending.id, 'E3=', e3.ending.id);
 
-  // 4. 上传视频
   console.log('[4] 上传视频...');
   const baseDir = 'C:\\plot_game\\test_videos';
   const videos = [
@@ -166,10 +158,7 @@ async function main() {
     }
   }
 
-  // 5. 创建场景
   console.log('[5] 创建场景...');
-  console.log('   vids keys:', Object.keys(vids).join(', '));
-  console.log('   vids values:', JSON.stringify(vids));
   const scenes = [
     { video_id: vids['scene1_intro.mp4'], title: '新校园的第一天', chapter: '序章', description: '主角来到新校园...', is_start: true, choice_timer: 10, choice_delay: 3 },
     { video_id: vids['scene2_library.mp4'], title: '安静的图书馆', chapter: '林雨晴线', choice_timer: 8, choice_delay: 0 },
@@ -186,7 +175,6 @@ async function main() {
     console.log('   ', r.scene.title, '→ id=', r.scene.id);
   }
 
-  // 6. 创建选项 + 好感度
   console.log('[6] 创建选项和好感度...');
   const choicesCfg = [
     [sids[0], '和林雨晴去图书馆 (温柔体贴路线)', sids[1], [{ cid: 1, delta: 15 }]],

@@ -1,4 +1,7 @@
-// upload-media.js — 为视频上传多语言音轨和字幕
+/**
+ * 为视频上传多语言音轨和字幕
+ * 用法: cd 项目根目录 && node scripts/ops/upload-media.js
+ */
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
@@ -6,7 +9,6 @@ const http = require('http');
 const BASE = 'http://localhost:3000';
 const MEDIA = 'uploads/media';
 
-// 语言配置
 const LANGS = [
   { code: 'zh', label: '中文' },
   { code: 'en', label: 'English' },
@@ -22,7 +24,6 @@ function apiPost(url, token, formData) {
 
     for (const [key, val] of Object.entries(formData)) {
       if (val instanceof Object && val.filePath) {
-        // File field
         const fileContent = fs.readFileSync(val.filePath);
         const filename = path.basename(val.filePath);
         chunks.push(Buffer.from(
@@ -90,7 +91,6 @@ async function main() {
     const subtitles = files.filter(f => f.endsWith('.vtt'));
 
     for (const f of audios) {
-      // v63-zh-1785309141034.mp3 → lang=zh
       const lang = f.split('-')[1];
       const cfg = LANGS.find(l => l.code === lang);
       const label = cfg ? cfg.label : lang;
@@ -126,7 +126,6 @@ async function main() {
   }
 
   console.log('\n上传完成！HLS 自动重建中...');
-  // 触发 HLS 重建
   for (const vid of [63, 64]) {
     try {
       const r = await apiPost(`${BASE}/api/videos/${vid}/rebuild-hls`, token, {});

@@ -1,3 +1,5 @@
+// 一次性迁移脚本 — 为 users 表添加 gender/age/preferences 字段
+// 注意：已归档，init-db.js 已包含这些字段的建表语句
 const mysql = require('mysql2/promise');
 require('dotenv').config();
 
