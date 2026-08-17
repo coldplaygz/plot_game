@@ -10,6 +10,13 @@
         <option :value="null">全部游戏</option>
         <option v-for="g in games" :key="g.id" :value="g.id">{{ g.title }}</option>
       </select>
+      <label class="text-xs text-text-dim ml-2">类别：</label>
+      <select v-model="filterCategory" @change="loadVideos"
+        class="px-3 py-2 bg-surface-darkest border border-border-dim rounded-lg text-white text-sm outline-none focus:border-brand-purple">
+        <option :value="null">全部</option>
+        <option value="scene">场景视频</option>
+        <option value="cover">封面视频</option>
+      </select>
       <div class="flex-1"></div>
       <button v-if="selectedIds.size > 0" @click="batchDelete"
         class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c]">
@@ -33,19 +40,30 @@
           />
           <span v-if="batchFiles.length" class="text-xs text-text-dim">已选择 {{ batchFiles.length }} 个文件</span>
         </div>
+        <div class="flex flex-col gap-1 min-w-[140px]">
+          <label class="text-xs text-text-dim">视频类别</label>
+          <select
+            v-model="batchCategory"
+            class="w-full px-3 py-2.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple"
+          >
+            <option value="scene">场景视频</option>
+            <option value="cover">封面视频</option>
+          </select>
+        </div>
         <div class="flex flex-col gap-1 min-w-[160px]">
           <label class="text-xs text-text-dim">归属游戏</label>
           <select
             v-model="batchGameId"
             class="w-full px-3 py-2.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple"
+            :disabled="batchCategory === 'cover'"
           >
             <option :value="null">— 不归属游戏 —</option>
             <option v-for="g in games" :key="g.id" :value="g.id">{{ g.title }}</option>
           </select>
         </div>
         <div class="flex items-center gap-4">
-          <label class="flex items-center gap-1.5 text-xs text-text-dim cursor-pointer whitespace-nowrap">
-            <input v-model="batchAutoScenes" type="checkbox" class="rounded" />
+          <label class="flex items-center gap-1.5 text-xs text-text-dim cursor-pointer whitespace-nowrap" :class="batchCategory === 'cover' ? 'opacity-40 pointer-events-none' : ''">
+            <input v-model="batchAutoScenes" type="checkbox" class="rounded" :disabled="batchCategory === 'cover'" />
             同时为每个视频创建场景
           </label>
           <button
@@ -85,6 +103,7 @@
           </th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">ID</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">标题</th>
+          <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">类别</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">归属游戏</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">文件名</th>
           <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">大小</th>
@@ -107,6 +126,10 @@
           </td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ v.id }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ v.title }}</td>
+          <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
+            <span v-if="v.category === 'cover'" class="px-1.5 py-0.5 bg-[#f59e0b]/20 text-[#f59e0b] text-[11px] rounded">封面</span>
+            <span v-else class="px-1.5 py-0.5 bg-brand-purple/20 text-brand-purple text-[11px] rounded">场景</span>
+          </td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dim">{{ v.game_title || '-' }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ v.filename }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ (v.file_size / 1024 / 1024).toFixed(1) }}MB</td>
@@ -129,9 +152,9 @@
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#059669] text-white hover:bg-[#047857]" @click="playVideo(v)">▶</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="editVideo(v)" title="编辑视频信息">✏️</button>
-            <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="manageMedia(v)">🎵字幕</button>
+            <button v-if="v.category === 'scene'" class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="manageMedia(v)">🎵字幕</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple ml-1" @click="replaceVideo(v)">🔄</button>
-            <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#7c3aed] text-white hover:bg-[#6d28d9] ml-1" @click="rebuildHls(v)" title="重建 HLS 多音轨流">HLS</button>
+            <button v-if="v.category === 'scene'" class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#7c3aed] text-white hover:bg-[#6d28d9] ml-1" @click="rebuildHls(v)" title="重建 HLS 多音轨流">HLS</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c] ml-1" @click="deleteVideo(v.id)">删除</button>
           </td>
         </tr>
@@ -397,11 +420,13 @@ async function batchDelete() {
 
 const games = ref([])
 const filterGameId = ref(null)
+const filterCategory = ref(null)  // 列表筛选：scene/cover/null
 
 // Batch Upload
 const batchFileInput = ref(null)
 const batchFiles = ref([])
 const batchGameId = ref(null)
+const batchCategory = ref('scene')  // 上传类别：scene=场景视频 cover=封面视频
 const batchAutoScenes = ref(false)
 const batchUploading = ref(false)
 const batchPercent = ref(0)
@@ -613,6 +638,7 @@ async function loadVideos() {
   try {
     const params = { limit: 200 }
     if (filterGameId.value) params.game_id = filterGameId.value
+    if (filterCategory.value) params.category = filterCategory.value
     const r = await get('/videos', params)
     videos.value = r.videos || []
     const cache = {}
@@ -695,8 +721,10 @@ async function batchUpload() {
     const fd = new FormData()
     fd.append('video', file)
     fd.append('title', file.name.replace(/\.[^.]+$/, ''))
-    if (batchGameId.value) fd.append('game_id', batchGameId.value)
-    if (batchAutoScenes.value) fd.append('auto_create_scene', '1')
+    // 类别：scene=场景视频（需 game_id + 可自动建场景） cover=封面视频（无需 game_id）
+    fd.append('category', batchCategory.value)
+    if (batchCategory.value === 'scene' && batchGameId.value) fd.append('game_id', batchGameId.value)
+    if (batchCategory.value === 'scene' && batchAutoScenes.value) fd.append('auto_create_scene', '1')
 
     try {
       await new Promise((resolve, reject) => {

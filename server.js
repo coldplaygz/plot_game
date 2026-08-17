@@ -48,6 +48,17 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
   maxAge: 86400
 };
+// 局域网 IP / 自定义主机名直访：Origin 与请求 Host 一致时视为同源，跳过白名单
+// （Vite 模块脚本以 CORS 模式加载，同源也会带 Origin 头；
+//   若不放行，通过 192.168.x.x 等非白名单地址访问时静态资源会被 403 拒绝）
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && req.headers.host) {
+    try { if (new URL(origin).host === req.headers.host) delete req.headers.origin; }
+    catch (_) { /* 非法 Origin，交由 cors 白名单处理 */ }
+  }
+  next();
+});
 app.use(cors(corsOptions));
 
 // ============ 安全 HTTP 头 ============

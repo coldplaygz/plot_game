@@ -419,6 +419,19 @@ async function initDatabase() {
         await conn.query('ALTER TABLE saves ADD FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE SET NULL');
         console.log('[InitDB] 已为 saves 表添加 game_id 字段');
       }
+      // videos 表添加 category 字段（区分场景视频和封面视频）
+      const [vCatCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='videos' AND COLUMN_NAME='category'", [dbName]);
+      if (vCatCols.length === 0) {
+        await conn.query("ALTER TABLE videos ADD COLUMN category ENUM('scene','cover') NOT NULL DEFAULT 'scene' COMMENT 'scene=游戏场景视频 cover=封面视频' AFTER game_id");
+        console.log('[InitDB] 已为 videos 表添加 category 字段');
+      }
+      // games 表添加 cover_video_id 字段（关联封面视频）
+      const [gCvCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='games' AND COLUMN_NAME='cover_video_id'", [dbName]);
+      if (gCvCols.length === 0) {
+        await conn.query("ALTER TABLE games ADD COLUMN cover_video_id INT DEFAULT NULL COMMENT '封面视频ID（优先于cover_image）' AFTER cover_image");
+        await conn.query('ALTER TABLE games ADD FOREIGN KEY (cover_video_id) REFERENCES videos(id) ON DELETE SET NULL');
+        console.log('[InitDB] 已为 games 表添加 cover_video_id 字段');
+      }
       // props 表添加 scene_id（幻想场景道具绑定到具体场景）
       const [pCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='props' AND COLUMN_NAME='scene_id'", [dbName]);
       if (pCols.length === 0) {

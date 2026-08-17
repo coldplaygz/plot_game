@@ -43,10 +43,21 @@
           class="break-inside-avoid mb-4 sm:mb-5 bg-surface-card border border-border-dim rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 hover:border-brand-purple/50 hover:shadow-[0_4px_24px_rgba(124,58,237,0.15)] hover:-translate-y-1 group"
         >
           <!-- Cover -->
-          <div class="relative bg-gradient-to-br from-brand-purple/30 via-surface-dark to-brand-cyan/20 overflow-hidden" :class="game.cover_image ? '' : 'aspect-[4/3]'">
+          <div class="relative bg-gradient-to-br from-brand-purple/30 via-surface-dark to-brand-cyan/20 overflow-hidden" :class="coverUrl(game) ? '' : 'aspect-[4/3]'">
+            <video
+              v-if="coverUrl(game) && isVideoCover(coverUrl(game))"
+              :src="'/' + coverUrl(game)"
+              muted
+              loop
+              autoplay
+              playsinline
+              :poster="''"
+              class="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105"
+              @error="onCoverVideoError"
+            />
             <img
-              v-if="game.cover_image"
-              :src="'/' + game.cover_image"
+              v-else-if="coverUrl(game)"
+              :src="'/' + coverUrl(game)"
               :alt="game.title"
               class="w-full h-auto object-cover transition-transform duration-500 group-hover:scale-105"
             />
@@ -160,6 +171,35 @@ async function fetchGames() {
 
 onMounted(() => { fetchGames(); loadConfig() })
 watch(() => lang.current, fetchGames)
+
+// 判断封面是否为视频（路径以 .mp4 结尾）
+function isVideoCover(url) {
+  if (!url) return false
+  if (url.startsWith('data:')) return url.startsWith('data:video/')
+  return /\.mp4(\?|$)/i.test(url)
+}
+
+// 封面 URL：优先封面视频，其次封面图
+function coverUrl(g) {
+  if (g.cover_video_path) return g.cover_video_path
+  return g.cover_image || ''
+}
+
+// 封面视频加载失败自动重试（上传后转码完成前原文件可能不可解码，
+// 或转码瞬间文件被替换导致 404；完成后同一 URL 也不会自动重载）
+// 每 5 秒重试一次，最多 12 次，带 retry 参数绕过 immutable 缓存
+function onCoverVideoError(e) {
+  const el = e.target
+  const retries = (parseInt(el.dataset.retries) || 0) + 1
+  if (retries > 12) return
+  el.dataset.retries = String(retries)
+  setTimeout(() => {
+    const base = (el.getAttribute('src') || '').split('?')[0]
+    if (!base) return
+    el.src = base + '?retry=' + retries
+    el.load()
+  }, 5000)
+}
 
 async function loadConfig() {
   try {

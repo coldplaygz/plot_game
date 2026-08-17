@@ -26,13 +26,14 @@ const coverStorage = multer.diskStorage({
 
 const coverUpload = multer({
   storage: coverStorage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB（图片通常 <5MB）
   fileFilter: (req, file, cb) => {
+    // 仅支持图片；视频封面必须走 /api/videos 上传（自动进 H.264 转码队列）
     const allowedExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
     const allowedMime = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExt.includes(ext) && allowedMime.includes(file.mimetype)) cb(null, true);
-    else cb(new Error('不支持的图片格式'));
+    else cb(new Error('封面图片仅支持 JPG/PNG/GIF/WebP；视频封面请使用"上传视频"（自动 H.264 转码）'));
   }
 });
 
@@ -60,9 +61,12 @@ router.get('/', async (req, res) => {
     const lang = req.query.lang || '';
     let sql = `
       SELECT g.*,
-        (SELECT COUNT(*) FROM videos v WHERE v.game_id = g.id) AS video_count,
-        (SELECT COUNT(*) FROM scenes s WHERE s.game_id = g.id) AS scene_count
+        (SELECT COUNT(*) FROM videos v WHERE v.game_id = g.id AND v.category = 'scene') AS video_count,
+        (SELECT COUNT(*) FROM scenes s WHERE s.game_id = g.id) AS scene_count,
+        cv.file_path AS cover_video_path,
+        cv.transcode_status AS cover_transcode_status
       FROM games g
+      LEFT JOIN videos cv ON g.cover_video_id = cv.id
     `;
     const params = [];
     if (publishedOnly) {
@@ -82,6 +86,22 @@ router.get('/', async (req, res) => {
     res.json({ games: rows });
   } catch (err) {
     console.error('[Games] 获取列表失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 获取可用作封面的视频列表（category='cover'，管理员/编辑者使用）
+router.get('/covers/list', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, title, file_path, duration, file_size, transcode_status, created_at
+       FROM videos
+       WHERE category = 'cover'
+       ORDER BY created_at DESC`
+    );
+    res.json({ covers: rows });
+  } catch (err) {
+    console.error('[Games] 获取封面视频列表失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });
@@ -150,15 +170,18 @@ router.post('/', authenticate, authorize('admin', 'editor'), coverUpload.single(
       coverImage = req.file.path.replace(/\\/g, '/');
     }
 
+    // 封面视频 ID（优先于 cover_image，二者可同时存在但前端优先用视频）
+    const coverVideoId = req.body.cover_video_id ? parseInt(req.body.cover_video_id) : null;
+
     const [result] = await pool.query(
-      `INSERT INTO games (title, title_i18n, cover_image, description, description_i18n, category, sort_order, is_published)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [title, req.body.title_i18n || null, coverImage, description || '', req.body.description_i18n || null, category || null, parseInt(sort_order) || 0, is_published !== undefined ? (is_published ? 1 : 0) : 1]
+      `INSERT INTO games (title, title_i18n, cover_image, cover_video_id, description, description_i18n, category, sort_order, is_published)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [title, req.body.title_i18n || null, coverImage, coverVideoId, description || '', req.body.description_i18n || null, category || null, parseInt(sort_order) || 0, is_published !== undefined ? (is_published ? 1 : 0) : 1]
     );
 
     res.status(201).json({
       message: '游戏创建成功',
-      game: { id: result.insertId, title, cover_image: coverImage }
+      game: { id: result.insertId, title, cover_image: coverImage, cover_video_id: coverVideoId }
     });
   } catch (err) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -199,6 +222,13 @@ router.put('/:id', authenticate, authorize('admin', 'editor'), coverUpload.singl
         try { if (fs.existsSync(oldGame.cover_image)) fs.unlinkSync(oldGame.cover_image); }
         catch (e) { console.warn('[Games] 删除旧封面失败:', e.message); }
       }
+    }
+
+    // 处理封面视频 ID（显式传入即可更新，支持置空：传空字符串表示清除）
+    if (req.body.cover_video_id !== undefined) {
+      const vid = req.body.cover_video_id ? parseInt(req.body.cover_video_id) : null;
+      fields.push('cover_video_id = ?');
+      values.push(vid);
     }
 
     if (fields.length === 0) {

@@ -12,6 +12,7 @@
  * 5. 单 IP 速率限制防止批量抓取
  */
 const crypto = require('crypto');
+const pool = require('../config/db');
 
 // 复用 JWT_SECRET 作为 HMAC 密钥
 const HLS_SECRET = process.env.JWT_SECRET;
@@ -135,17 +136,44 @@ function checkReferer(req) {
   const urlStr = referer || origin;
   try {
     const host = new URL(urlStr).host;
+    // Referer/Origin 与请求 Host 一致 → 同源访问（局域网 IP / 自定义主机名直访），放行
+    if (req.headers.host && host === req.headers.host) return true;
     return ALLOWED_HOSTS.includes(host);
   } catch {
     return false;
   }
 }
 
+// === 封面视频公开访问（首页未登录展示需要） ===
+// category='cover' 的视频免凭证校验，仅保留速率限制 + 防盗链
+const coverCache = new Map(); // 规范化路径 -> { isCover, expireAt }
+const COVER_CACHE_TTL = 5 * 60 * 1000;
+
+async function isPublicCoverVideo(reqPath) {
+  // reqPath 形如 /videos/xxx.mp4 → 规范化为 uploads/videos/xxx.mp4（统一正斜杠，DB 里 Windows 可能存反斜杠）
+  const norm = ('uploads/' + reqPath.replace(/^\//, '').replace(/\\/g, '/')).toLowerCase();
+  const now = Date.now();
+  const cached = coverCache.get(norm);
+  if (cached && cached.expireAt > now) return cached.isCover;
+  let isCover = false;
+  try {
+    const [rows] = await pool.query(
+      "SELECT id FROM videos WHERE category = 'cover' AND REPLACE(LOWER(file_path), ?, '/') = ? LIMIT 1",
+      ['\\', norm]
+    );
+    isCover = rows.length > 0;
+  } catch (e) {
+    console.error('[HlsAuth] 封面视频查询失败:', e.message);
+  }
+  coverCache.set(norm, { isCover, expireAt: now + COVER_CACHE_TTL });
+  return isCover;
+}
+
 /**
  * HLS 鉴权中间件
  * 用于 /uploads/videos/ 路径，保护 HLS 流和原始视频文件
  */
-function hlsAuthMiddleware(req, res, next) {
+async function hlsAuthMiddleware(req, res, next) {
   const ip = req.ip || req.socket?.remoteAddress || 'unknown';
 
   // 1. 速率限制
@@ -158,7 +186,12 @@ function hlsAuthMiddleware(req, res, next) {
     return res.status(403).json({ error: '禁止外部引用' });
   }
 
-  // 3. 凭证校验（Cookie 或 URL token）
+  // 3. 封面视频免登录（首页公开展示），仅校验防盗链与速率
+  if (await isPublicCoverVideo(req.path)) {
+    return next();
+  }
+
+  // 4. 凭证校验（Cookie 或 URL token）
   if (!verifyRequest(req)) {
     return res.status(403).json({ error: '无访问权限' });
   }

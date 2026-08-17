@@ -174,13 +174,13 @@ router.get('/', async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
     const gameId = req.query.game_id ? parseInt(req.query.game_id) : null;
+    const category = req.query.category === 'cover' ? 'cover' : (req.query.category === 'scene' ? 'scene' : null);
 
-    let whereClause = '';
+    const conditions = [];
     const params = [];
-    if (gameId) {
-      whereClause = ' WHERE v.game_id = ?';
-      params.push(gameId);
-    }
+    if (gameId) { conditions.push('v.game_id = ?'); params.push(gameId); }
+    if (category) { conditions.push('v.category = ?'); params.push(category); }
+    const whereClause = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
 
     const [countResult] = await pool.query('SELECT COUNT(*) AS total FROM videos v' + whereClause, params);
     const [rows] = await pool.query(
@@ -207,20 +207,26 @@ router.post('/', authorize('admin', 'editor'), upload.single('video'), async (re
     const { title } = req.body;
     if (!title) { fs.unlinkSync(req.file.path); return res.status(400).json({ error: '视频标题不能为空' }); }
 
+    // category: scene=游戏场景视频（默认） cover=封面视频（不转 HLS 但仍需 H.264 兼容转码）
+    const category = req.body.category === 'cover' ? 'cover' : 'scene';
+    // 封面视频不需要 game_id，也不创建场景；场景视频必须有 game_id
+    const gameId = category === 'scene' && req.body.game_id ? parseInt(req.body.game_id) : null;
+
     let filePath = req.file.path.replace(/\\\\/g, '/');
 
     const stats = fs.statSync(filePath);
     const duration = await getVideoDuration(filePath);
-    const gameId = req.body.game_id ? parseInt(req.body.game_id) : null;
+    // 所有视频都需 H.264 转码保证浏览器兼容性（封面视频也走，只是不进 HLS 切片队列）
     const [result] = await pool.query(
-      `INSERT INTO videos (title, description, filename, file_path, file_size, duration, mime_type, transcode_status, uploaded_by, game_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
-      [title, req.body.description || '', fixFilename(req.file.originalname), filePath, stats.size, duration, req.file.mimetype || 'video/mp4', req.user.id, gameId]
+      `INSERT INTO videos (title, description, filename, file_path, file_size, duration, mime_type, transcode_status, uploaded_by, game_id, category)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+      [title, req.body.description || '', fixFilename(req.file.originalname), filePath, stats.size, duration, req.file.mimetype || 'video/mp4', req.user.id, gameId, category]
     );
-    const responseData = { message: '视频上传成功', video: { id: result.insertId, title }, warning: '视频正在后台转码为 H.264 兼容格式，转码完成前播放可能出现兼容性问题' };
+    const responseData = { message: '视频上传成功', video: { id: result.insertId, title, category } };
+    responseData.warning = '视频正在后台转码为 H.264 兼容格式，转码完成前播放可能出现兼容性问题';
 
-    // 自动创建场景
-    if (req.body.auto_create_scene === '1' && gameId) {
+    // 自动创建场景（仅场景视频 + 指定 game_id 时）
+    if (category === 'scene' && req.body.auto_create_scene === '1' && gameId) {
       try {
         const [sceneR] = await pool.query(
           'INSERT INTO scenes (video_id, title, chapter, is_start, game_id) VALUES (?, ?, ?, ?, ?)',
@@ -232,7 +238,7 @@ router.post('/', authorize('admin', 'editor'), upload.single('video'), async (re
 
     res.status(201).json(responseData);
 
-    // 加入转码队列（不阻塞响应）
+    // 所有视频都进入 H.264 转码队列（HLS 切片仅场景视频在管理界面手动触发）
     enqueueTranscode(result.insertId, filePath);
 
   } catch (err) {
