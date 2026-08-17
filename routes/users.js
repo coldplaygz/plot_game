@@ -74,7 +74,7 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const userId = parseInt(req.params.id);
-    const { nickname, gender, age, preferences, role, points } = req.body;
+    const { nickname, gender, age, preferences, role, points, remark } = req.body;
 
     // 禁止修改自己角色(防止降级)
     if (userId === req.user.id && role && role !== req.user.role) {

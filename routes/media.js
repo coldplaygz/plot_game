@@ -28,9 +28,14 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    // 音频 + 字幕格式
-    const allowed = ['.mp3', '.m4a', '.aac', '.ogg', '.wav', '.srt', '.vtt', '.ass', '.ssa'];
-    if (allowed.includes(ext)) cb(null, true);
+    // 音频 + 字幕格式（扩展名 + MIME 双重校验）
+    const audioExt = ['.mp3', '.m4a', '.aac', '.ogg', '.wav'];
+    const subExt = ['.srt', '.vtt', '.ass', '.ssa'];
+    const audioMime = ['audio/mpeg', 'audio/mp3', 'audio/m4a', 'audio/x-m4a', 'audio/aac', 'audio/ogg', 'audio/wav', 'audio/x-wav', 'audio/wave'];
+    const subMime = ['application/octet-stream', 'text/vtt', 'text/plain', 'application/x-subrip', 'text/srt'];
+    const isAudio = audioExt.includes(ext) && audioMime.includes(file.mimetype);
+    const isSub = subExt.includes(ext) && subMime.includes(file.mimetype);
+    if (isAudio || isSub) cb(null, true);
     else cb(new Error('不支持的文件格式'));
   }
 });

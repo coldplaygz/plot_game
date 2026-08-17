@@ -11,8 +11,8 @@ const { authenticate, authorize } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
-// 用户自助充值（无需管理员权限）
-router.post('/self', async (req, res) => {
+// 自助充值（仅管理员可调用，需接入支付系统后再开放给普通用户）
+router.post('/self', authorize('admin'), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const amount = parseFloat(req.body.amount);

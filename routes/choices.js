@@ -5,7 +5,7 @@ const { authenticate, authorize } = require('../middleware/auth');
 const router = express.Router();
 
 // 获取某场景的所有选择
-router.get('/scene/:sceneId', async (req, res) => {
+router.get('/scene/:sceneId', authenticate, async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT c.*, ns.title AS next_scene_title

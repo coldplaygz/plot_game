@@ -2,12 +2,17 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, JWT_SECRET, JWT_EXPIRES_IN } = require('../middleware/auth');
+const { rateLimit } = require('../middleware/rateLimit');
+const { setHlsCookie } = require('../middleware/hlsAuth');
 require('dotenv').config();
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'plot_game_jwt_secret';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '72h';
+
+// 严格限流：登录每 IP 每 15 分钟最多 10 次（防暴力破解）
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: '登录尝试过于频繁，请 15 分钟后再试' });
+// 严格限流：注册每 IP 每小时最多 5 次（防批量注册）
+const registerLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 5, message: '注册请求过于频繁，请 1 小时后再试' });
 
 // 维护模式中间件
 async function maintenanceCheck(req, res, next) {
@@ -44,7 +49,7 @@ function pickUser(u) {
 }
 
 // 注册
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, async (req, res) => {
   try {
     // 检查是否开放注册
     const [cfg] = await pool.query("SELECT config_value FROM system_config WHERE config_key='reg_enabled'");
@@ -64,7 +69,8 @@ router.post('/register', async (req, res) => {
       [username, passwordHash, nickname || username, gender || null, age ? parseInt(age) : null, preferences || null, 'player']
     );
 
-    const token = jwt.sign({ id: result.insertId, username, role: 'player' }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const token = jwt.sign({ id: result.insertId, role: 'player' }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    setHlsCookie(res, result.insertId);
     res.status(201).json({
       token,
       user: { id: result.insertId, username, nickname: nickname || username, role: 'player', gender: gender || null, age: age ? parseInt(age) : null, preferences: preferences || null, points: 0 }
@@ -76,7 +82,7 @@ router.post('/register', async (req, res) => {
 });
 
 // 登录
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: '用户名和密码不能为空' });
@@ -91,7 +97,8 @@ router.post('/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) return res.status(401).json({ error: '用户名或密码错误' });
 
-    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    setHlsCookie(res, user.id);
     res.json({ token, user: pickUser(user) });
   } catch (err) {
     console.error('[Auth] 登录失败:', err);

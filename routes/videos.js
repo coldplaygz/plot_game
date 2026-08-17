@@ -156,9 +156,12 @@ const upload = multer({
   storage,
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 524288000 },
   fileFilter: (req, file, cb) => {
-    const allowed = ['.mp4', '.webm', '.mov', '.avi', '.mkv', '.m4v'];
-    if (allowed.includes(path.extname(file.originalname).toLowerCase())) cb(null, true);
-    else cb(new Error('不支持的文件格式: ' + allowed.join(', ')));
+    const allowedExt = ['.mp4', '.webm', '.mov', '.avi', '.mkv', '.m4v'];
+    const allowedMime = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska', 'video/x-m4v'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    // 扩展名 + MIME 双重校验，防止伪装扩展名绕过
+    if (allowedExt.includes(ext) && (file.mimetype && allowedMime.includes(file.mimetype))) cb(null, true);
+    else cb(new Error('不支持的视频格式'));
   }
 });
 
@@ -323,7 +326,7 @@ router.post('/batch', authorize('admin', 'editor'), upload.array('videos', 50), 
       req.files.forEach(f => { try { if (fs.existsSync(f.path)) fs.unlinkSync(f.path); } catch(e) {} });
     }
     console.error('[Videos] 批量上传失败:', err);
-    res.status(500).json({ error: err.message || '批量上传失败' });
+    res.status(500).json({ error: '批量上传失败' });
   }
 });
 

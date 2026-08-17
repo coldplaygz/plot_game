@@ -36,7 +36,7 @@ router.get('/', authenticate, authorize('admin', 'editor'), async (req, res) => 
 });
 
 // 获取单个场景详情（含选择项和好感规则）
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticate, async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT s.*, v.title AS video_title, v.file_path, v.duration, v.mime_type,

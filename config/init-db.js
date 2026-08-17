@@ -131,6 +131,7 @@ async function initDatabase() {
         is_ending TINYINT(1) DEFAULT 0 COMMENT '是否结局场景',
         ending_id INT DEFAULT NULL COMMENT '若为结局,关联结局ID',
         choice_timer INT DEFAULT 10 COMMENT '选择倒计时(秒),0=不限时',
+        choice_delay INT DEFAULT 0 COMMENT '选项弹出延迟(秒),0=视频结束时',
         sort_order INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -271,13 +272,15 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS points_log (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NOT NULL,
+        operator_id INT DEFAULT NULL COMMENT '操作管理员',
         points INT NOT NULL COMMENT '变动积分(正=获得,负=消费)',
         type ENUM('recharge','choice','admin','refund','prop') NOT NULL,
         ref_id INT DEFAULT NULL COMMENT '关联ID(choice_id/recharge_id等)',
         balance INT NOT NULL COMMENT '变动后余额',
         remark VARCHAR(255) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
       ) ENGINE=InnoDB
     `);
 
@@ -447,6 +450,31 @@ async function initDatabase() {
       }
     } catch (e) {
       console.warn('[InitDB] 修正 points_log.type 枚举值失败:', e.message);
+    }
+
+    // ============ 迁移: 补齐旧表缺失字段（scenes.title_i18n / scenes.choice_delay / points_log.operator_id） ============
+    try {
+      // scenes.title_i18n（多语言标题）
+      const [stCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='scenes' AND COLUMN_NAME='title_i18n'", [dbName]);
+      if (stCols.length === 0) {
+        await conn.query("ALTER TABLE scenes ADD COLUMN title_i18n TEXT DEFAULT NULL COMMENT '多语言标题 JSON' AFTER title");
+        console.log('[InitDB] 已为 scenes 表添加 title_i18n 字段');
+      }
+      // scenes.choice_delay（选项弹出延迟）
+      const [sdCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='scenes' AND COLUMN_NAME='choice_delay'", [dbName]);
+      if (sdCols.length === 0) {
+        await conn.query("ALTER TABLE scenes ADD COLUMN choice_delay INT DEFAULT 0 COMMENT '选项弹出延迟(秒),0=视频结束时' AFTER choice_timer");
+        console.log('[InitDB] 已为 scenes 表添加 choice_delay 字段');
+      }
+      // points_log.operator_id（操作管理员）
+      const [poCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='points_log' AND COLUMN_NAME='operator_id'", [dbName]);
+      if (poCols.length === 0) {
+        await conn.query("ALTER TABLE points_log ADD COLUMN operator_id INT DEFAULT NULL COMMENT '操作管理员' AFTER user_id");
+        await conn.query("ALTER TABLE points_log ADD FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL");
+        console.log('[InitDB] 已为 points_log 表添加 operator_id 字段');
+      }
+    } catch (e) {
+      console.warn('[InitDB] 补齐旧表缺失字段失败 (可能已存在):', e.message);
     }
 
     // 创建默认管理员

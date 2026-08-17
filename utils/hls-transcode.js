@@ -101,6 +101,7 @@ async function transcodeVideoToHLS(videoId) {
     'SELECT * FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC, id ASC', [videoId]
   );
 
+  // 确定性目录名：{videoId}_hls（cookie 鉴权已足够防盗链，目录名随机无额外价值）
   const hlsDir = getHlsDir(videoId);
   // 清理旧目录（重建场景）
   if (fs.existsSync(hlsDir)) fs.rmSync(hlsDir, { recursive: true, force: true });
@@ -172,7 +173,8 @@ async function transcodeVideoToHLS(videoId) {
   }
 
   // ── 4. 生成 master.m3u8 ──
-  await regenMaster(videoId, bandwidth);
+  // 传入 hlsDir：全量转码时 DB 尚未更新 hls_dir（新视频为随机目录名），需直接使用实际路径
+  await regenMaster(videoId, bandwidth, hlsDir);
 
   await pool.query('UPDATE videos SET hls_master_path=?, hls_dir=?, hls_status=? WHERE id=?',
     [path.join(hlsDir, 'master.m3u8').replace(/\\/g, '/'), hlsDir.replace(/\\/g, '/'), 'done', videoId]);
@@ -290,10 +292,16 @@ function removeSubtitleFile(hlsDirAbs, lang) {
 }
 
 // ─── 重生成 master.m3u8（从 DB 读取最新状态） ───
-async function regenMaster(videoId, bandwidth) {
-  const [vRows] = await pool.query('SELECT hls_dir FROM videos WHERE id = ?', [videoId]);
-  if (vRows.length === 0) throw new Error('视频不存在');
-  const hlsDir = vRows[0].hls_dir || getHlsDir(videoId);
+// hlsDirOverride: 全量转码时传入实际目录（此时 DB 尚未更新 hls_dir）
+async function regenMaster(videoId, bandwidth, hlsDirOverride) {
+  let hlsDir;
+  if (hlsDirOverride) {
+    hlsDir = hlsDirOverride;
+  } else {
+    const [vRows] = await pool.query('SELECT hls_dir FROM videos WHERE id = ?', [videoId]);
+    if (vRows.length === 0) throw new Error('视频不存在');
+    hlsDir = vRows[0].hls_dir || getHlsDir(videoId);
+  }
   const hlsDirAbs = path.resolve(hlsDir);
 
   if (!fs.existsSync(hlsDirAbs)) {

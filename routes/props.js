@@ -233,11 +233,15 @@ router.post('/:id/use', authenticate, async (req, res) => {
       if (vRows.length > 0) video = vRows[0];
     }
 
+    // 查询用户当前积分余额（deductPoints 已更新积分，这里读取最新值）
+    const [[userRow]] = await pool.query('SELECT points FROM users WHERE id = ?', [userId]);
+    const balance = userRow ? userRow.points : 0;
+
     const response = {
       message: '道具使用成功',
       prop: { id: prop.id, name: prop.name, type: prop.type, animation: prop.animation },
       points_consumed: prop.point_cost > 0,
-      points_balance: prop.point_cost > 0 ? currentPoints - prop.point_cost : currentPoints,
+      points_balance: balance,
       video
     };
     res.json(response);

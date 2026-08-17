@@ -28,12 +28,11 @@ const coverUpload = multer({
   storage: coverStorage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
-    const allowed = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-    if (allowed.includes(path.extname(file.originalname).toLowerCase())) {
-      cb(null, true);
-    } else {
-      cb(new Error('不支持的图片格式: ' + allowed.join(', ')));
-    }
+    const allowedExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    const allowedMime = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedExt.includes(ext) && allowedMime.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('不支持的图片格式'));
   }
 });
 
@@ -54,7 +53,7 @@ function translateGame(game, lang) {
   }
 }
 
-// 获取所有游戏列表（公开）
+// 获取所有游戏列表（公开，首页展示用，仅返回已发布游戏的基本信息）
 router.get('/', async (req, res) => {
   try {
     const publishedOnly = req.query.published_only !== 'false';
@@ -87,8 +86,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 获取单个游戏详情（公开）
-router.get('/:id', async (req, res) => {
+// 获取单个游戏详情（需登录）
+router.get('/:id', authenticate, async (req, res) => {
   try {
     const gameId = parseInt(req.params.id);
 
