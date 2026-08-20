@@ -24,8 +24,9 @@ export function useParticleSystem(rootEl) {
     const el = rootEl.value
     const w = el ? el.clientWidth : window.innerWidth
     const h = el ? el.clientHeight : window.innerHeight
-    const cx = Math.round(w * (0.3 + Math.random() * 0.4))
-    const cy = Math.round(h * (0.22 + Math.random() * 0.3))
+    // 每次触发的中心点全屏随机（避免连点时特效都挤在中间）
+    const cx = Math.round(w * (0.08 + Math.random() * 0.84))
+    const cy = Math.round(h * (0.12 + Math.random() * 0.56))
     const type = p.animation || 'confetti'
 
     const push = (opts) => {

@@ -58,10 +58,10 @@
 
       <div class="text-red-500 text-[13px] mt-2 min-h-[20px]">{{ errorMsg }}</div>
 
-      <button @click="handleSubmit"
-        class="w-full py-3 text-white border-none rounded-[10px] text-[15px] cursor-pointer mt-3 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_4px_20px_rgba(124,58,237,0.4)]"
-        style="background: linear-gradient(135deg, #7c3aed, #e040fb)">
-        {{ isRegister ? '注 册' : '登 录' }}
+      <button @click="handleSubmit" :disabled="submitting"
+        class="w-full py-3 text-white border-none rounded-[10px] text-[15px] cursor-pointer mt-3 transition-all duration-200 hover:-translate-y-px hover:shadow-[0_4px_20px_rgba(124,58,237,0.4)] disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+        :class="submitting ? '' : 'bg-[linear-gradient(135deg,#7c3aed,#e040fb)]'">
+        {{ submitting ? '请稍候...' : (isRegister ? '注 册' : '登 录') }}
       </button>
 
       <div class="text-text-dim text-[13px] mt-4 cursor-pointer select-none">
@@ -86,6 +86,7 @@ const nickname = ref('')
 const gender = ref('')
 const age = ref('')
 const prefers = ref([])
+const submitting = ref(false)  // 提交锁：防双击重复请求
 const isRegister = ref(false)
 const errorMsg = ref('')
 
@@ -112,6 +113,7 @@ function toggleMode() {
 }
 
 async function handleSubmit() {
+  if (submitting.value) return
   errorMsg.value = ''
   if (!username.value.trim() || !password.value) {
     errorMsg.value = '请输入用户名和密码'
@@ -121,6 +123,7 @@ async function handleSubmit() {
     errorMsg.value = '密码至少6位'
     return
   }
+  submitting.value = true
   try {
     if (isRegister.value) {
       await auth.register(
@@ -135,6 +138,8 @@ async function handleSubmit() {
     else router.push('/')
   } catch (e) {
     errorMsg.value = e.message || '操作失败'
+  } finally {
+    submitting.value = false
   }
 }
 </script>

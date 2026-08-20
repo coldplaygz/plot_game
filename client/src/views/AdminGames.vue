@@ -129,8 +129,20 @@
             </div>
           </div>
         </div>
-        <div>
+        <div class="flex flex-wrap items-center gap-4">
           <label class="flex items-center gap-2 text-xs text-text-dim cursor-pointer"><input v-model="form.is_published" type="checkbox" class="rounded" /> 发布（公开可见）</label>
+          <div class="flex items-center gap-1.5">
+            <label class="text-xs text-text-dim whitespace-nowrap" title="开场页封面视频播完后，菜单背后循环播放视频最后 N 秒；0 = 整段循环">封面尾段循环(秒)</label>
+            <input v-model.number="form.intro_tail_seconds" type="number" min="0" max="60"
+              class="w-16 px-2 py-1.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-sm outline-none focus:border-brand-purple" />
+          </div>
+          <div class="flex items-center gap-1.5">
+            <label class="text-xs text-text-dim whitespace-nowrap" title="开场页开始游戏菜单在画面中的显示位置">开始菜单位置</label>
+            <select v-model="form.menu_position"
+              class="px-2 py-1.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-sm outline-none focus:border-brand-purple">
+              <option v-for="mp in menuPositions" :key="mp.value" :value="mp.value">{{ mp.label }}</option>
+            </select>
+          </div>
         </div>
       </div>
       <template #actions>
@@ -193,8 +205,22 @@ const coverInput = ref(null)
 
 const emptyForm = () => ({
   id: null, title: '', description: '', category: '', cover_image: null, cover_preview: null, cover_video_id: null, is_published: false,
-  title_en: '', title_ja: '', title_ko: '', desc_en: '', desc_ja: '', desc_ko: ''
+  title_en: '', title_ja: '', title_ko: '', desc_en: '', desc_ja: '', desc_ko: '',
+  intro_tail_seconds: 3, menu_position: 'center'
 })
+
+// 开始菜单位置选项（开场页）
+const menuPositions = [
+  { value: 'center', label: '居中' },
+  { value: 'top', label: '顶部居中' },
+  { value: 'bottom', label: '底部居中' },
+  { value: 'left', label: '左侧居中' },
+  { value: 'right', label: '右侧居中' },
+  { value: 'top-left', label: '左上角' },
+  { value: 'top-right', label: '右上角' },
+  { value: 'bottom-left', label: '左下角' },
+  { value: 'bottom-right', label: '右下角' }
+]
 const form = ref(emptyForm())
 
 // 封面视频选择
@@ -310,7 +336,8 @@ function openEdit(g) {
   form.value = {
     id: g.id, title: g.title || '', description: g.description || '', category: g.category || '',
     cover_image: null, cover_preview: g.cover_video_path || g.cover_image || null, cover_video_id: g.cover_video_id || null,
-    is_published: !!g.is_published
+    is_published: !!g.is_published,
+    intro_tail_seconds: g.intro_tail_seconds ?? 3, menu_position: g.menu_position || 'center'
   }
   // 编辑时同步封面视频转码状态（仍在转码则显示遮罩）
   coverVideoStatus.value = g.cover_video_id ? (g.cover_transcode_status || null) : null
@@ -487,6 +514,8 @@ async function saveGame() {
     fd.append('description', form.value.description || '')
     fd.append('category', form.value.category || '')
     fd.append('is_published', form.value.is_published ? '1' : '0')
+    fd.append('intro_tail_seconds', String(Number.isFinite(parseInt(form.value.intro_tail_seconds)) ? parseInt(form.value.intro_tail_seconds) : 3))
+    fd.append('menu_position', form.value.menu_position || 'center')
     const ti = buildI18n('title_'); if (ti) fd.append('title_i18n', ti)
     const di = buildI18n('desc_'); if (di) fd.append('description_i18n', di)
     if (form.value.cover_image instanceof File) fd.append('cover_image', form.value.cover_image)

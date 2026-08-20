@@ -86,44 +86,7 @@
       {{ footerText }}
     </footer>
 
-    <!-- Game Start Dialog -->
-    <Teleport to="body">
-      <div v-if="dialogVisible" class="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 backdrop-blur-sm" @click.self="closeDialog">
-        <div class="bg-surface-card border border-border-dim rounded-2xl p-8 w-[420px] max-w-[90vw] shadow-2xl">
-          <h3 class="text-lg text-white font-bold text-center mb-2">{{ selectedGame?.title }}</h3>
-          <p class="text-sm text-text-dim text-center mb-6">{{ selectedGame?.category || '' }}</p>
-
-          <!-- Step 1: Main Menu -->
-          <div v-if="!showSaves" class="flex flex-col gap-2">
-            <button @click="startNew" class="w-full py-3 bg-brand-purple text-white rounded-xl text-sm font-medium hover:bg-brand-purple-dark transition-colors">
-              🆕 开始新游戏
-            </button>
-            <button v-if="gameSaves.length > 0" @click="showSaves = true" class="w-full py-3 bg-white/5 border border-brand-purple/30 text-brand-purple rounded-xl text-sm font-medium hover:bg-brand-purple/15 transition-colors">
-              📂 读取存档 ({{ gameSaves.length }})
-            </button>
-            <button @click="closeDialog" class="w-full py-3 bg-transparent border border-border-dim text-text-muted rounded-xl text-sm hover:border-brand-purple hover:text-white transition-colors">
-              取消
-            </button>
-          </div>
-
-          <!-- Step 2: Saves List -->
-          <div v-else class="space-y-2">
-            <button
-              v-for="s in gameSaves"
-              :key="s.id"
-              @click="loadGameSave(s)"
-              class="w-full text-left px-4 py-3 bg-white/5 hover:bg-brand-purple/15 rounded-lg transition-colors"
-            >
-              <div class="text-sm text-white">{{ s.title }}</div>
-              <div class="text-xs text-text-dim mt-0.5">{{ s.scene_title }} · {{ formatSaveTime(s.updated_at) }}</div>
-            </button>
-            <button @click="showSaves = false" class="w-full py-3 bg-transparent border border-border-dim text-text-muted rounded-xl text-sm hover:text-white transition-colors mt-4">
-              ← 返回
-            </button>
-          </div>
-        </div>
-      </div>
-    </Teleport>
+    <!-- Game Start Dialog 已移除：点击卡片直接进入开场页（封面视频 + 开始菜单） -->
 
   </div>
 </template>
@@ -133,16 +96,12 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useLangStore } from '../stores/lang'
-import { useGameStore } from '../stores/game'
-import { useToast } from '../composables/useToast'
 import { useApi } from '../composables/useApi'
 import LangSelector from '../components/LangSelector.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 const lang = useLangStore()
-const game = useGameStore()
-const toast = useToast()
 const { get } = useApi()
 
 const games = ref([])
@@ -150,11 +109,7 @@ const loading = ref(true)
 const siteName = ref('长城AI互动短剧平台')
 const footerText = ref('Powered by 长城AI互动短剧平台')
 
-// Game start dialog
-const dialogVisible = ref(false)
-const selectedGame = ref(null)
-const gameSaves = ref([])
-const showSaves = ref(false)
+// Game start dialog 已移除：点击卡片直接进入开场页（封面视频 + 开始菜单）
 
 async function fetchGames() {
   loading.value = true
@@ -209,43 +164,15 @@ async function loadConfig() {
   } catch {}
 }
 
-async function askGame(g) {
-  selectedGame.value = g
-  gameSaves.value = []
-  showSaves.value = false
-  dialogVisible.value = true
+// 点击游戏卡片 → 进入开场页（封面视频播放 + 开始游戏菜单）
+// 未登录先跳登录，登录后回到开场页
+function askGame(g) {
+  const introPath = '/intro/' + g.id
   if (auth.isLoggedIn) {
-    try {
-      gameSaves.value = await game.fetchGameSaves(g.id)
-    } catch (e) { /* ignore */ }
-  }
-}
-
-function closeDialog() {
-  dialogVisible.value = false
-  showSaves.value = false
-}
-
-async function startNew() {
-  if (!selectedGame.value) return
-  dialogVisible.value = false
-  if (auth.isLoggedIn) {
-    router.push('/play/' + selectedGame.value.id)
+    router.push(introPath)
   } else {
-    router.push('/login?redirect=' + encodeURIComponent('/play/' + selectedGame.value.id))
+    router.push('/login?redirect=' + encodeURIComponent(introPath))
   }
-}
-
-async function loadGameSave(s) {
-  dialogVisible.value = false
-  const ok = await game.loadGame(s.id)
-  if (ok) router.push('/game')
-}
-
-function formatSaveTime(d) {
-  if (!d) return ''
-  const t = new Date(d)
-  return t.toLocaleDateString() + ' ' + t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 function handleLogout() {

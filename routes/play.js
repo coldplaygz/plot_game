@@ -5,7 +5,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { deductPoints } = require('../services/pointsService');
+const { deductPoints, deductPointsOnce } = require('../services/pointsService');
 
 const router = express.Router();
 router.use(authenticate);
@@ -88,7 +88,7 @@ router.get('/start', async (req, res) => {
 
     const lang = req.query.lang || '';
     const scene = rows[0];
-    scene.choices = await getSceneChoices(scene.id, {}, lang);
+    scene.choices = await getSceneChoices(scene.id, {}, lang, req.user.id);
 
     // 翻译场景标题
     const sceneTitleI18n = t(scene.title_i18n, lang);
@@ -129,6 +129,72 @@ router.get('/start', async (req, res) => {
 });
 
 /**
+ * 加载场景完整数据（场景 + 选项 + 音轨字幕 + 好感度 + 结局）
+ * 供 GET /scene/:sceneId 与 POST /backtrack 共用
+ */
+async function loadSceneData(sceneId, userId, lang = '', affections = {}) {
+  const currentAffections = { ...affections };
+
+  const [rows] = await pool.query(`
+    SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status,
+           v.hls_master_path, v.hls_status
+    FROM scenes s
+    JOIN videos v ON s.video_id = v.id
+    WHERE s.id = ?
+  `, [sceneId]);
+
+  if (rows.length === 0) return null;
+
+  const scene = rows[0];
+  scene.choices = await getSceneChoices(sceneId, currentAffections, lang, userId);
+
+  // 翻译场景标题
+  const sceneTitleI18n = t(scene.title_i18n, lang);
+  if (sceneTitleI18n) scene.title = sceneTitleI18n;
+
+  // 音轨 & 字幕
+  const [audios] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+  const [subtitles] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
+  // 补充 HLS URL 供前端使用
+  scene.hls_url = scene.hls_status === 'done' ? normalizeHlsUrl(scene.hls_master_path) : '';
+  scene.audios = audios.map(a => ({ ...a, hls_url: normalizeHlsUrl(a.hls_playlist_path) }));
+  scene.subtitles = subtitles.map(s => ({ ...s, hls_url: normalizeHlsUrl(s.hls_playlist_path) }));
+
+  // choice_delay 未设置时默认取视频完整时长
+  if ((!scene.choice_delay || scene.choice_delay === 0) && scene.choices.length > 0) {
+    scene.choice_delay = Math.floor(scene.duration || 0);
+  }
+
+  // 角色好感度状态
+  const [characters] = await pool.query(
+    'SELECT id, name, color, avatar FROM characters WHERE is_hidden = 0 ORDER BY sort_order'
+  );
+  scene.characters = characters.map(c => ({
+    ...c,
+    affection: currentAffections[c.id] || 0
+  }));
+
+  // 如果是结局场景
+  if (scene.is_ending && scene.ending_id) {
+    const [ending] = await pool.query(`
+      SELECT e.*, c.name AS character_name
+      FROM endings e LEFT JOIN characters c ON e.character_id = c.id
+      WHERE e.id = ?
+    `, [scene.ending_id]);
+    if (ending.length > 0) {
+      scene.ending = ending[0];
+      // 自动解锁结局
+      await pool.query(
+        'INSERT IGNORE INTO player_endings (user_id, ending_id) VALUES (?, ?)',
+        [userId, scene.ending_id]
+      );
+    }
+  }
+
+  return scene;
+}
+
+/**
  * GET /api/play/scene/:sceneId
  * 获取指定场景的播放数据（含选项）
  * Query: ?affections={"1":10,"2":-5}  当前好感度JSON
@@ -139,72 +205,72 @@ router.get('/scene/:sceneId', async (req, res) => {
     const lang = req.query.lang || '';
 
     // 解析当前好感度
-    let currentAffections = {};
+    let affections = {};
     try {
-      currentAffections = JSON.parse(req.query.affections || '{}');
+      affections = JSON.parse(req.query.affections || '{}');
     } catch (e) { /* ignore */ }
 
-    const [rows] = await pool.query(`
-      SELECT s.*, v.file_path, v.duration, v.mime_type, v.transcode_status,
-             v.hls_master_path, v.hls_status
-      FROM scenes s
-      JOIN videos v ON s.video_id = v.id
-      WHERE s.id = ?
-    `, [sceneId]);
-
-    if (rows.length === 0) {
-      return res.status(404).json({ error: '场景不存在' });
-    }
-
-    const scene = rows[0];
-    scene.choices = await getSceneChoices(sceneId, currentAffections, lang);
-
-    // 翻译场景标题
-    const sceneTitleI18n = t(scene.title_i18n, lang);
-    if (sceneTitleI18n) scene.title = sceneTitleI18n;
-
-    // 音轨 & 字幕
-    const [audios] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
-    const [subtitles] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_subtitles WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
-    // 补充 HLS URL 供前端使用
-    scene.hls_url = scene.hls_status === 'done' ? normalizeHlsUrl(scene.hls_master_path) : '';
-    scene.audios = audios.map(a => ({ ...a, hls_url: normalizeHlsUrl(a.hls_playlist_path) }));
-    scene.subtitles = subtitles.map(s => ({ ...s, hls_url: normalizeHlsUrl(s.hls_playlist_path) }));
-    
-    // choice_delay 未设置时默认取视频完整时长
-    if ((!scene.choice_delay || scene.choice_delay === 0) && scene.choices.length > 0) {
-      scene.choice_delay = Math.floor(scene.duration || 0);
-    }
-
-    // 角色好感度状态
-    const [characters] = await pool.query(
-      'SELECT id, name, color, avatar FROM characters WHERE is_hidden = 0 ORDER BY sort_order'
-    );
-    scene.characters = characters.map(c => ({
-      ...c,
-      affection: currentAffections[c.id] || 0
-    }));
-
-    // 如果是结局场景
-    if (scene.is_ending && scene.ending_id) {
-      const [ending] = await pool.query(`
-        SELECT e.*, c.name AS character_name
-        FROM endings e LEFT JOIN characters c ON e.character_id = c.id
-        WHERE e.id = ?
-      `, [scene.ending_id]);
-      if (ending.length > 0) {
-        scene.ending = ending[0];
-        // 自动解锁结局
-        await pool.query(
-          'INSERT IGNORE INTO player_endings (user_id, ending_id) VALUES (?, ?)',
-          [req.user.id, scene.ending_id]
-        );
-      }
-    }
+    const scene = await loadSceneData(sceneId, req.user.id, lang, affections);
+    if (!scene) return res.status(404).json({ error: '场景不存在' });
 
     res.json({ scene, transcode_warning: scene.transcode_status !== 'done' ? '该视频正在转码中，播放可能出现兼容性问题' : null });
   } catch (err) {
     console.error('[Play] 获取场景失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+/**
+ * POST /api/play/backtrack
+ * 返回上一场景 - 扣除积分（数额后台 system_config.backtrack_cost 配置）
+ * Body: { to_scene_id }  目标场景（前端历史栈的上一场景）
+ */
+router.post('/backtrack', async (req, res) => {
+  try {
+    const toSceneId = parseInt(req.body.to_scene_id);
+    if (!toSceneId) return res.status(400).json({ error: '请提供目标场景ID' });
+
+    const userId = req.user.id;
+    const lang = req.body.lang || '';
+
+    // 读取回退成本（后台可配，默认 10）
+    let cost = 10;
+    try {
+      const [cfg] = await pool.query("SELECT config_value FROM system_config WHERE config_key='backtrack_cost'");
+      if (cfg.length) cost = Math.max(0, parseInt(cfg[0].config_value) || 0);
+    } catch (e) { /* 用默认值 */ }
+
+    // 目标场景必须存在
+    const [target] = await pool.query('SELECT id FROM scenes WHERE id = ?', [toSceneId]);
+    if (target.length === 0) return res.status(404).json({ error: '目标场景不存在' });
+
+    // 扣积分（成本为 0 时免费回退）
+    let pointsBalance;
+    if (cost > 0) {
+      const result = await deductPoints(userId, cost, 'backtrack', toSceneId, `返回上一场景: 场景#${toSceneId}`);
+      if (!result.success) {
+        return res.status(402).json({
+          error: '积分不足',
+          required: result.required,
+          current: result.current,
+          message: result.message
+        });
+      }
+      pointsBalance = result.balance;
+    }
+
+    // 加载目标场景完整数据
+    const scene = await loadSceneData(toSceneId, userId, lang);
+    if (!scene) return res.status(404).json({ error: '场景不存在' });
+
+    res.json({
+      scene,
+      point_cost: cost,
+      points_balance: pointsBalance,
+      transcode_warning: scene.transcode_status !== 'done' ? '该视频正在转码中，播放可能出现兼容性问题' : null
+    });
+  } catch (err) {
+    console.error('[Play] 返回上一场景失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });
@@ -231,9 +297,11 @@ router.post('/choose', async (req, res) => {
     const choice = choices[0];
     const pointCost = choice.point_cost || 0;
 
-    // 积分检查与扣除（使用统一 service）
+    // 幂等扣费：同一选项只扣一次（行锁事务，并发双击不会双扣）
+    let alreadyPaid = false;
+    let pointsBalance;
     if (pointCost > 0) {
-      const result = await deductPoints(userId, pointCost, 'choice', choice.id, `选项消耗: ${choice.text}`);
+      const result = await deductPointsOnce(userId, pointCost, 'choice', choice.id, `选项消耗: ${choice.text}`);
       if (!result.success) {
         return res.status(402).json({
           error: '积分不足',
@@ -242,6 +310,8 @@ router.post('/choose', async (req, res) => {
           message: result.message
         });
       }
+      alreadyPaid = !!result.alreadyPaid;
+      pointsBalance = result.balance;
     }
 
     // 计算好感度变化
@@ -279,13 +349,13 @@ router.post('/choose', async (req, res) => {
       affection_changes: affectionChanges,
       is_ending: !choice.next_scene_id, // 没有下一场景=结束
       point_cost: pointCost,
-      points_consumed: pointCost > 0
+      already_paid: alreadyPaid,
+      points_consumed: pointCost > 0 && !alreadyPaid
     };
 
-    // 如果消耗了积分，返回最新余额
-    if (pointCost > 0) {
-      const [pts] = await pool.query('SELECT points FROM users WHERE id = ?', [userId]);
-      response.points_balance = pts[0].points;
+    // 如果消耗了积分，返回最新余额（事务内已取，无需再查）
+    if (pointCost > 0 && !alreadyPaid) {
+      response.points_balance = pointsBalance;
     }
 
     res.json(response);
@@ -296,9 +366,9 @@ router.post('/choose', async (req, res) => {
 });
 
 /**
- * 获取场景的选择项（含条件过滤）
+ * 获取场景的选择项（含条件过滤 + 已付费标记）
  */
-async function getSceneChoices(sceneId, affections, lang = '') {
+async function getSceneChoices(sceneId, affections, lang = '', userId = null) {
   const [allChoices] = await pool.query(`
     SELECT c.*, ns.title AS next_scene_title
     FROM choices c
@@ -306,6 +376,16 @@ async function getSceneChoices(sceneId, affections, lang = '') {
     WHERE c.scene_id = ?
     ORDER BY c.sort_order ASC
   `, [sceneId]);
+
+  // 查询玩家已付费的选项（同选项重复选择不再收费）
+  const paidSet = new Set();
+  if (userId && allChoices.length) {
+    const [paidRows] = await pool.query(
+      "SELECT DISTINCT ref_id FROM points_log WHERE user_id = ? AND type = 'choice' AND ref_id IN (?)",
+      [userId, allChoices.map(c => c.id)]
+    );
+    paidRows.forEach(r => paidSet.add(r.ref_id));
+  }
 
   const validChoices = [];
 
@@ -351,6 +431,7 @@ async function getSceneChoices(sceneId, affections, lang = '') {
         text,
         timer_seconds: choice.timer_seconds,
         point_cost: choice.point_cost || 0,
+        paid: paidSet.has(choice.id),  // 已付费：重复选择不再收费
         affection_hint: rules.map(r => ({
           character_name: r.character_name,
           direction: r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : 'none'

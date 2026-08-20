@@ -13,10 +13,12 @@ const router = express.Router();
 // 公开接口 — 获取前端需要的配置
 router.get('/', async (req, res) => {
   try {
-    const keys = ['site_name', 'footer_text', 'default_lang', 'reg_enabled', 'maintenance_mode', 'admin_path', 'points_rate'];
+    const keys = ['site_name', 'footer_text', 'default_lang', 'reg_enabled', 'maintenance_mode', 'admin_path', 'points_rate', 'backtrack_cost'];
     const [rows] = await pool.query('SELECT config_key, config_value FROM system_config WHERE config_key IN (?)', [keys]);
     const config = {};
     rows.forEach(r => { config[r.config_key] = r.config_value; });
+    // 回退成本默认值（未配置时前端展示用）
+    if (config.backtrack_cost === undefined) config.backtrack_cost = '10';
     res.json({ config });
   } catch (err) {
     res.status(500).json({ error: '服务器内部错误' });
@@ -41,7 +43,11 @@ router.put('/', authenticate, authorize('admin'), async (req, res) => {
 
     for (const item of configs) {
       if (item.config_key && item.config_value !== undefined) {
-        await pool.query('UPDATE system_config SET config_value=? WHERE config_key=?', [item.config_value, item.config_key]);
+        // upsert：新配置项无需预先建行
+        await pool.query(
+          'INSERT INTO system_config (config_key, config_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)',
+          [item.config_key, String(item.config_value)]
+        );
       }
     }
     res.json({ message: '配置已更新' });

@@ -8,6 +8,7 @@ const routes = [
   { path: '/leaderboard', name: 'leaderboard', component: () => import('../views/PropLeaderboard.vue'), meta: { requiresAuth: true } },
   { path: '/lobby', redirect: '/' },
   { path: '/game', name: 'game', component: () => import('../views/GamePlayer.vue'), meta: { requiresAuth: true } },
+  { path: '/intro/:gameId', name: 'intro', component: () => import('../views/GameIntro.vue'), meta: { requiresAuth: true } },
   { path: '/play/:gameId', name: 'play', component: () => import('../views/GamePlayer.vue'), meta: { requiresAuth: true } },
   { path: '/ending', name: 'ending', component: () => import('../views/Ending.vue'), meta: { requiresAuth: true } },
 

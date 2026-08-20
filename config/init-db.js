@@ -92,6 +92,8 @@ async function initDatabase() {
         category VARCHAR(100) DEFAULT NULL COMMENT '分类标签',
         sort_order INT DEFAULT 0,
         is_published TINYINT(1) DEFAULT 1,
+        intro_tail_seconds INT DEFAULT 3 COMMENT '开场页封面视频播完后循环播放的尾段秒数，0=整段循环',
+        menu_position VARCHAR(20) DEFAULT 'center' COMMENT '开场开始菜单显示位置',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB
@@ -198,6 +200,7 @@ async function initDatabase() {
         title VARCHAR(255) DEFAULT NULL COMMENT '存档标题',
         screenshot VARCHAR(500) DEFAULT NULL,
         play_time INT DEFAULT 0 COMMENT '已玩时间(秒)',
+        history_json TEXT DEFAULT NULL COMMENT '场景历史栈JSON（供返回上一场景）',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -205,6 +208,18 @@ async function initDatabase() {
         UNIQUE KEY unique_user_slot (user_id, slot)
       ) ENGINE=InnoDB
     `);
+
+    // 旧库迁移：saves 表补充 history_json 字段
+    try {
+      const [hCol] = await conn.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='saves' AND COLUMN_NAME='history_json'",
+        [dbName]
+      );
+      if (!hCol.length) {
+        await conn.query("ALTER TABLE saves ADD COLUMN history_json TEXT DEFAULT NULL COMMENT '场景历史栈JSON（供返回上一场景）'");
+        console.log('[InitDB] 已为 saves 表补充 history_json 字段');
+      }
+    } catch (e) { console.warn('[InitDB] saves.history_json 迁移失败 (可能已存在):', e.message); }
 
     // ============ 11. 存档好感度快照 ============
     await conn.query(`
@@ -274,7 +289,7 @@ async function initDatabase() {
         user_id INT NOT NULL,
         operator_id INT DEFAULT NULL COMMENT '操作管理员',
         points INT NOT NULL COMMENT '变动积分(正=获得,负=消费)',
-        type ENUM('recharge','choice','admin','refund','prop') NOT NULL,
+        type ENUM('recharge','choice','admin','refund','prop','backtrack') NOT NULL,
         ref_id INT DEFAULT NULL COMMENT '关联ID(choice_id/recharge_id等)',
         balance INT NOT NULL COMMENT '变动后余额',
         remark VARCHAR(255) DEFAULT NULL,
@@ -283,6 +298,18 @@ async function initDatabase() {
         FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
       ) ENGINE=InnoDB
     `);
+
+    // 旧库迁移：points_log.type 枚举补充 'backtrack'（返回上一场景扣积分）
+    try {
+      const [plEnum] = await conn.query(
+        "SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='points_log' AND COLUMN_NAME='type'",
+        [dbName]
+      );
+      if (plEnum.length && !plEnum[0].COLUMN_TYPE.includes('backtrack')) {
+        await conn.query("ALTER TABLE points_log MODIFY COLUMN type ENUM('recharge','choice','admin','refund','prop','backtrack') NOT NULL");
+        console.log('[InitDB] 已为 points_log.type 枚举补充 backtrack 值');
+      }
+    } catch (e) { console.warn('[InitDB] points_log 枚举迁移失败 (可能已存在):', e.message); }
 
     console.log('[InitDB] 15 张数据表(含积分体系)创建/确认完成');
 
@@ -424,6 +451,17 @@ async function initDatabase() {
       if (vCatCols.length === 0) {
         await conn.query("ALTER TABLE videos ADD COLUMN category ENUM('scene','cover') NOT NULL DEFAULT 'scene' COMMENT 'scene=游戏场景视频 cover=封面视频' AFTER game_id");
         console.log('[InitDB] 已为 videos 表添加 category 字段');
+      }
+      // games 表添加开场引导配置（封面尾段循环秒数 + 开始菜单位置）
+      const [gTailCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='games' AND COLUMN_NAME='intro_tail_seconds'", [dbName]);
+      if (gTailCols.length === 0) {
+        await conn.query("ALTER TABLE games ADD COLUMN intro_tail_seconds INT DEFAULT 3 COMMENT '开场页封面视频播完后循环播放的尾段秒数，0=整段循环' AFTER is_published");
+        console.log('[InitDB] 已为 games 表添加 intro_tail_seconds 字段');
+      }
+      const [gMenuCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='games' AND COLUMN_NAME='menu_position'", [dbName]);
+      if (gMenuCols.length === 0) {
+        await conn.query("ALTER TABLE games ADD COLUMN menu_position VARCHAR(20) DEFAULT 'center' COMMENT '开场开始菜单显示位置' AFTER intro_tail_seconds");
+        console.log('[InitDB] 已为 games 表添加 menu_position 字段');
       }
       // games 表添加 cover_video_id 字段（关联封面视频）
       const [gCvCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='games' AND COLUMN_NAME='cover_video_id'", [dbName]);

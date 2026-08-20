@@ -42,6 +42,11 @@
             <label class="text-xs text-text-dim">新选项默认积分消耗</label>
             <input v-model.number="form.default_point_cost" type="number" min="0" class="w-full mt-1 px-3 py-2.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-sm outline-none focus:border-brand-purple" />
           </div>
+          <div>
+            <label class="text-xs text-text-dim">返回上一场景消耗（播放页"返回"功能）</label>
+            <input v-model.number="form.backtrack_cost" type="number" min="0" class="w-full mt-1 px-3 py-2.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-sm outline-none focus:border-brand-purple" />
+            <p class="text-[11px] text-text-dimmest mt-1">玩家在播放中返回上一场景需扣的积分，0 = 免费</p>
+          </div>
         </div>
       </div>
 
@@ -111,7 +116,7 @@ const saved = ref(false)
 
 const form = ref({
   site_name: '', footer_text: '', default_lang: 'zh',
-  points_rate: 10, default_point_cost: 1,
+  points_rate: 10, default_point_cost: 1, backtrack_cost: 10,
   payment_provider: '', payment_appid: '', payment_secret: '', payment_enabled: '0',
   reg_enabled: '1', maintenance_mode: '0'
 })

@@ -125,15 +125,15 @@ router.post('/', async (req, res) => {
       [userId, amt, pts, payment_method || 'manual', req.user.id, remark || null]
     );
 
-    // 2. 更新用户积分
-    const newBalance = userRows[0].points + pts;
-    await conn.query('UPDATE users SET points = ? WHERE id = ?', [newBalance, userId]);
+    // 2. 原子累加积分（相对更新，避免读改写竞态）
+    await conn.query('UPDATE users SET points = points + ? WHERE id = ?', [pts, userId]);
 
-    // 3. 积分流水
+    // 3. 事务内读取最新余额 + 积分流水
+    const [[user]] = await conn.query('SELECT points FROM users WHERE id = ?', [userId]);
     await conn.query(
       `INSERT INTO points_log (user_id, operator_id, points, type, ref_id, balance, remark)
        VALUES (?, ?, ?, 'recharge', ?, ?, ?)`,
-      [userId, req.user.id, pts, result.insertId, newBalance, remark || '充值获得']
+      [userId, req.user.id, pts, result.insertId, user.points, remark || '充值获得']
     );
 
     await conn.commit();
@@ -143,7 +143,7 @@ router.post('/', async (req, res) => {
       user_id: userId,
       amount: amt,
       points: pts,
-      balance: newBalance,
+      balance: user.points,
       message: '充值成功'
     });
   } catch (err) {

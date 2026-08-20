@@ -2,6 +2,10 @@
   <div
     ref="rootEl"
     class="h-player fixed inset-0 flex flex-col bg-black select-none overflow-hidden overscroll-none"
+    :class="controlsVisible ? '' : 'cursor-none'"
+    @mousemove="revealControls"
+    @touchstart.passive="revealControls"
+    @click="revealControls"
   >
     <video
       ref="videoEl"
@@ -12,35 +16,32 @@
     ></video>
 
     <!-- ═══ 顶栏：返回 + 场景标题 + 菜单 ═══ -->
-    <div class="relative z-20 shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 pt-[env(safe-area-inset-top)] pb-2 bg-gradient-to-b from-black/70 to-transparent">
-      <button @click="onReturnToLobby"
-        class="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/25 active:bg-white/35 transition-colors text-white shrink-0"
-        title="返回首页">
-        <svg viewBox="0 0 24 24" class="w-5 h-5 sm:w-4 sm:h-4" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
-      </button>
-      <span v-if="game.currentScene" class="flex-1 min-w-0 truncate text-sm text-white/70">{{ game.currentScene.title }}</span>
-
-      <!-- 顶栏菜单（存档/读档/返回大厅） -->
+    <div class="relative z-20 shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 pt-[env(safe-area-inset-top)] pb-2 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300"
+      :class="controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'">
       <div class="relative shrink-0">
-        <button @click="showTopMenu = !showTopMenu"
+        <button @click="showBackMenu = !showBackMenu"
           class="w-11 h-11 sm:w-9 sm:h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/25 active:bg-white/35 transition-colors text-white"
-          title="菜单">
-          <svg viewBox="0 0 24 24" class="w-5 h-5 sm:w-4 sm:h-4" fill="currentColor"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+          title="返回">
+          <svg viewBox="0 0 24 24" class="w-5 h-5 sm:w-4 sm:h-4" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
         </button>
-        <div v-if="showTopMenu" class="fixed inset-0 z-40" @click="showTopMenu = false"></div>
-        <div v-if="showTopMenu" class="absolute top-full right-0 mt-2 w-40 bg-surface-card border border-border-dim rounded-xl overflow-hidden z-50 shadow-xl max-h-[70vh] overflow-y-auto">
-          <button @click="openSaveLoad('save')"
-            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors">💾 存档</button>
-          <button @click="openSaveLoad('load')"
-            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors">📂 读档</button>
+        <div v-if="showBackMenu" class="fixed inset-0 z-40" @click="showBackMenu = false"></div>
+        <div v-if="showBackMenu" class="absolute top-full left-0 mt-2 w-52 bg-surface-card border border-border-dim rounded-xl overflow-hidden z-50 shadow-xl">
+          <button @click="onBacktrack"
+            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            :disabled="!game.sceneHistory.length || backtracking">
+            <span>↩ 返回上一场景</span>
+            <span class="ml-auto text-xs shrink-0" :class="backtrackCost > 0 ? 'text-amber-400' : 'text-green-400'">
+              {{ backtracking ? '处理中...' : (backtrackCost > 0 ? '💎' + backtrackCost : '免费') }}
+            </span>
+          </button>
           <button @click="onReturnToLobby()"
-            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors">🏠 返回大厅</button>
+            class="flex w-full items-center gap-2 px-4 py-3 text-sm text-text-subtle hover:bg-brand-purple/20 hover:text-white transition-colors border-t border-border-dim">
+            🏠 返回大厅
+          </button>
         </div>
       </div>
+      <span v-if="game.currentScene" class="flex-1 min-w-0 truncate text-sm text-white/70">{{ game.currentScene.title }}</span>
     </div>
-
-    <!-- 存档/读档弹窗 -->
-    <SaveLoadModal v-if="saveLoadVisible" :mode="saveLoadMode" @close="saveLoadVisible = false" />
 
     <!-- ═══ 中间区：缓冲 + 大播放按钮 ═══ -->
     <div class="relative z-10 flex-1 min-h-0 flex items-center justify-center pointer-events-none">
@@ -51,18 +52,18 @@
       </div>
     </div>
 
-    <!-- ═══ 选项弹窗 ═══ -->
-    <div v-if="choicesActive" class="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div class="w-[90%] max-w-md bg-surface-card border border-border-dim rounded-2xl p-5 shadow-2xl">
-        <div class="flex flex-col gap-2">
-          <button v-for="(c, i) in currentChoices" :key="c.id"
-            @click="onChoose(c.id)"
-            class="flex items-center justify-between gap-3 px-4 py-3 text-left text-sm text-white bg-white/8 hover:bg-brand-purple/30 border border-border-dim hover:border-brand-purple rounded-lg transition-colors">
-            <span class="min-w-0"><span class="text-text-dim mr-2">{{ i + 1 }}.</span>{{ c.text }}</span>
-            <span v-if="c.point_cost > 0"
-              class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-400/15 text-amber-400 border border-amber-400/30 text-xs">💎 {{ c.point_cost }}</span>
-          </button>
-        </div>
+    <!-- ═══ 选项弹窗（无遮罩无模糊，选项直接悬浮） ═══ -->
+    <div v-if="choicesActive" class="absolute inset-0 z-30 flex items-center justify-center">
+      <div class="w-[90%] max-w-md flex flex-col gap-2">
+        <button v-for="(c, i) in currentChoices" :key="c.id"
+          @click="onChoose(c.id)"
+          class="flex items-center justify-between gap-3 px-4 py-3 text-left text-sm text-white bg-black/55 hover:bg-brand-purple/40 border border-white/15 hover:border-brand-purple rounded-lg transition-colors">
+          <span class="min-w-0"><span class="text-text-dim mr-2">{{ i + 1 }}.</span>{{ c.text }}</span>
+          <span v-if="c.paid"
+            class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-400/15 text-green-400 border border-green-400/30 text-xs">✓ 已购买</span>
+          <span v-else-if="c.point_cost > 0"
+            class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-400/15 text-amber-400 border border-amber-400/30 text-xs">💎 {{ c.point_cost }}</span>
+        </button>
       </div>
     </div>
 
@@ -75,23 +76,8 @@
       </div>
 
       <!-- 控制栏 -->
-      <div class="px-3 sm:px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] bg-gradient-to-t from-black/85 via-black/60 to-transparent">
-        <!-- 进度条（可拖拽 seek） -->
-        <div class="flex items-center gap-2 mb-3">
-          <span class="text-[11px] text-text-dim tabular-nums w-10 text-right">{{ formatTime(videoCurrentTime) }}</span>
-          <div ref="progressBarEl"
-               class="relative flex-1 h-1.5 bg-white/15 rounded-full cursor-pointer group"
-               @click="onSeekClick"
-               @mousedown="onSeekStart"
-               @touchstart.passive="onSeekStart">
-            <div class="absolute left-0 top-0 h-full bg-gradient-to-r from-brand-purple to-brand-pink rounded-full"
-                 :style="{ width: progressPercent + '%' }"></div>
-            <div class="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow"
-                 :style="{ left: progressPercent + '%' }"></div>
-          </div>
-          <span class="text-[11px] text-text-dim tabular-nums w-10">{{ formatTime(videoDuration) }}</span>
-        </div>
-
+      <div class="px-3 sm:px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] bg-gradient-to-t from-black/85 via-black/60 to-transparent transition-opacity duration-300"
+        :class="controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'">
         <!-- 按钮行 -->
         <div class="flex items-center gap-1.5 sm:gap-2">
           <!-- 播放/暂停 -->
@@ -124,7 +110,7 @@
             </button>
             <div v-if="showSpeedMenu" class="fixed inset-0 z-40" @click="showSpeedMenu = false"></div>
             <div v-if="showSpeedMenu" class="absolute bottom-full left-0 mb-2 w-24 bg-surface-card border border-border-dim rounded-xl overflow-hidden z-50 shadow-xl max-h-[70vh] overflow-y-auto">
-              <button v-for="r in [1, 1.5, 2]" :key="r" @click="setSpeed(r)"
+              <button v-for="r in [0.5, 0.75, 1, 1.5, 2]" :key="r" @click="setSpeed(r)"
                 class="flex w-full items-center justify-center py-2 text-sm transition-colors"
                 :class="playbackRate === r ? 'bg-brand-purple/25 text-white' : 'text-text-dim hover:bg-white/10 hover:text-white'">{{ r }}x</button>
             </div>
@@ -168,8 +154,8 @@
               <div>
                 <div class="px-2 pb-1 text-xs text-text-dimmer">倍速</div>
                 <div class="flex gap-1">
-                  <button v-for="r in [1, 1.5, 2]" :key="r" @click="setSpeed(r)"
-                    class="flex-1 py-2 rounded-lg text-sm transition-colors"
+                  <button v-for="r in [0.5, 0.75, 1, 1.5, 2]" :key="r" @click="setSpeed(r)"
+                    class="flex-1 py-2 px-0.5 rounded-lg text-xs transition-colors"
                     :class="playbackRate === r ? 'bg-brand-purple/25 text-white' : 'bg-white/10 text-text-dim hover:bg-white/20 hover:text-white'">{{ r }}x</button>
                 </div>
               </div>
@@ -304,7 +290,6 @@ import { useConfirm } from '../composables/useConfirm'
 import { useParticleSystem } from '../composables/game/useParticleSystem'
 import { useFantasyPlayer } from '../composables/game/useFantasyPlayer'
 import { useMobileDetection } from '../composables/game/useMobileDetection'
-import SaveLoadModal from '../components/SaveLoadModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -316,7 +301,6 @@ const toast = useToast()
 
 const rootEl = ref(null)
 const videoEl = ref(null)
-const progressBarEl = ref(null)
 
 // ═══ Composable: 粒子动画 ═══
 const { effectAnims, effectShake, triggerShake, spawnEffect, cleanup: cleanupParticles } = useParticleSystem(rootEl)
@@ -330,19 +314,20 @@ const { isMobile, updateMobileDetection } = useMobileDetection()
 // 播放状态
 const isPlaying = ref(false)
 const isBuffering = ref(false)
-const videoCurrentTime = ref(0)
-const videoDuration = ref(0)
+const videoCurrentTime = ref(0)  // 供 choice_delay 弹出检测用，无进度条 UI
+const videoDuration = ref(0)     // 供 skipScene 用，无进度条 UI
 const playbackRate = ref(1)
 const isLooping = ref(false)
 const subtitleText = ref('')
 
-// UI 菜单状态
-const showTopMenu = ref(false)
+// UI 菜单状态（存档/读档入口已移除：过场景自动保存 + 开场页继续游戏）
 const showMoreMenu = ref(false)
 const showSpeedMenu = ref(false)
-const showGameMenu = ref(false)
-const saveLoadVisible = ref(false)
-const saveLoadMode = ref('save')
+const showBackMenu = ref(false)
+
+// 返回上一场景（扣积分，数额后台 backtrack_cost 配置）
+const backtracking = ref(false)
+const backtrackCost = ref(10)
 
 // ═══ 道具系统 ═══
 const propList = ref([])
@@ -359,21 +344,14 @@ async function loadProps(sceneId) {
   } catch (e) {}
 }
 
-// 使用道具
+// 使用道具（不弹扣费确认，可连续点击；仅积分不足时提示）
+// 300ms 节流：防意外双击多扣一次积分，不阻止刻意连点
+let lastPropUseAt = 0
 async function useProp(p) {
   if (!p) return
-  showPropPanel.value = false
-  const cost = p.point_cost || 0
-  if (cost > 0) {
-    const ok = await confirm({
-      title: '使用道具',
-      message: `使用「${p.icon} ${p.name}」将扣除 ${cost} 💎，确定使用吗？`,
-      icon: p.icon,
-      confirmText: '使用',
-      cancelText: '取消'
-    })
-    if (!ok) return
-  }
+  const now = Date.now()
+  if (now - lastPropUseAt < 300) return
+  lastPropUseAt = now
   let res
   try {
     res = await post('/props/' + p.id + '/use', {
@@ -399,7 +377,11 @@ async function useProp(p) {
     const auth = useAuthStore()
     if (auth.user) auth.user.points = res.points_balance
   }
+  if (res.points_consumed) {
+    toast.show(`-${p.point_cost} 💎 剩余 ${res.points_balance}`)
+  }
   if (p.type === 'fantasy') {
+    showPropPanel.value = false
     playFantasy(res.video)
   } else {
     spawnEffect(p)
@@ -425,14 +407,36 @@ let subExplicitlyOff = false  // 用户主动关闭字幕，跨场景不重新�
 const currentChoices = ref([])
 const choicesActive = ref(false)
 
-// 拖拽 seek
-let isSeeking = false
-
-const progressPercent = computed(() => {
-  if (!videoDuration.value) return 0
-  return Math.min(100, Math.max(0, (videoCurrentTime.value / videoDuration.value) * 100))
+// ═══ 控制栏自动隐藏（沉浸式播放） ═══
+// 播放中 3 秒无操作自动隐藏顶栏 + 控制栏；移动鼠标/触摸/点击唤醒
+// 暂停、缓冲、选项弹出、任一菜单打开时控制栏常驻
+const controlsVisible = ref(true)
+let hideControlsTimer = null
+const shouldKeepControls = computed(() =>
+  !isPlaying.value || isBuffering.value || choicesActive.value ||
+  showMoreMenu.value || showSpeedMenu.value || showBackMenu.value ||
+  showPropPanel.value
+)
+function revealControls() {
+  controlsVisible.value = true
+  scheduleHideControls()
+}
+function scheduleHideControls() {
+  if (hideControlsTimer) clearTimeout(hideControlsTimer)
+  hideControlsTimer = setTimeout(() => {
+    if (!shouldKeepControls.value) controlsVisible.value = false
+  }, 3000)
+}
+watch(shouldKeepControls, keep => {
+  if (keep) {
+    controlsVisible.value = true
+    if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
+  } else {
+    scheduleHideControls()
+  }
 })
 
+// 拖拽 seek 已随进度条移除
 // ═══════════════════════════════════════════════════════════════
 // HLS 加载（照搬 hls-test 的标准实现）
 // ═══════════════════════════════════════════════════════════════
@@ -598,7 +602,7 @@ function onPause() { isPlaying.value = false }
 function onWaiting() { isBuffering.value = true }
 function onPlaying() { isBuffering.value = false }
 function onTimeUpdate() {
-  if (!isSeeking) videoCurrentTime.value = videoEl.value?.currentTime || 0
+  videoCurrentTime.value = videoEl.value?.currentTime || 0
   checkChoicePopup()
 }
 function onDurationChange() {
@@ -690,55 +694,12 @@ async function toggleFullscreen() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 进度条 seek
+// 进度条已按需求移除（防拖拽快进），seek 相关逻辑一并清理
 // ═══════════════════════════════════════════════════════════════
-function getSeekRatio(clientX) {
-  const bar = progressBarEl.value
-  if (!bar) return 0
-  const rect = bar.getBoundingClientRect()
-  const ratio = (clientX - rect.left) / rect.width
-  return Math.min(1, Math.max(0, ratio))
-}
-
-function onSeekClick(e) {
-  const v = videoEl.value
-  if (!v || !videoDuration.value) return
-  v.currentTime = getSeekRatio(e.clientX) * videoDuration.value
-}
-
-function onSeekStart(e) {
-  const v = videoEl.value
-  if (!v || !videoDuration.value) return
-  isSeeking = true
-  const clientX = e.touches ? e.touches[0].clientX : e.clientX
-  videoCurrentTime.value = getSeekRatio(clientX) * videoDuration.value
-
-  const onMove = (ev) => {
-    const x = ev.touches ? ev.touches[0].clientX : ev.clientX
-    videoCurrentTime.value = getSeekRatio(x) * videoDuration.value
-  }
-  const onEnd = () => {
-    v.currentTime = videoCurrentTime.value
-    isSeeking = false
-    document.removeEventListener('mousemove', onMove)
-    document.removeEventListener('mouseup', onEnd)
-    document.removeEventListener('touchmove', onMove)
-    document.removeEventListener('touchend', onEnd)
-  }
-  document.addEventListener('mousemove', onMove)
-  document.addEventListener('mouseup', onEnd)
-  document.addEventListener('touchmove', onMove, { passive: false })
-  document.addEventListener('touchend', onEnd)
-}
 
 // ═══════════════════════════════════════════════════════════════
-// 存档/读档
+// 存档/读档入口已移除：loadScene 自动存档（slot=-game_id），读档走开场页"继续游戏"
 // ═══════════════════════════════════════════════════════════════
-function openSaveLoad(mode) {
-  showTopMenu.value = false
-  saveLoadMode.value = mode
-  saveLoadVisible.value = true
-}
 
 // ═══════════════════════════════════════════════════════════════
 // 场景播放 + 选项逻辑
@@ -836,7 +797,7 @@ async function onChoose(choiceId) {
 
 function onReturnToLobby() {
   playRequestId++
-  showTopMenu.value = false
+  showBackMenu.value = false
   destroyHls()
   if (videoEl.value) {
     videoEl.value.pause()
@@ -846,11 +807,47 @@ function onReturnToLobby() {
   router.push('/')
 }
 
-function formatTime(sec) {
-  if (!sec || !Number.isFinite(sec)) return '0:00'
-  const m = Math.floor(sec / 60)
-  const s = Math.floor(sec % 60)
-  return m + ':' + (s < 10 ? '0' : '') + s
+// 返回上一场景：确认 → 扣积分 → 回退播放
+async function onBacktrack() {
+  showBackMenu.value = false
+  if (!game.sceneHistory.length) { toast.show('已在起始场景，无法返回'); return }
+  if (backtracking.value) return
+
+  // 免费时无需确认弹窗（成本 0 直接回退）
+  if (backtrackCost.value > 0) {
+    const ok = await confirm({
+      title: '返回上一场景',
+      message: `返回上一场景将消耗 ${backtrackCost.value} 💎，确定吗？`,
+      icon: '↩',
+      confirmText: '返回',
+      cancelText: '取消'
+    })
+    if (!ok) return
+  }
+
+  backtracking.value = true
+  const result = await game.backtrack()
+  backtracking.value = false
+
+  if (!result) return
+  if (result.insufficientPoints) {
+    const go = await confirm({
+      title: '积分不足',
+      message: `返回上一场景需要 ${result.required} 💎，当前余额 ${result.current} 💎`,
+      icon: '💎',
+      confirmText: '去充值',
+      cancelText: '取消'
+    })
+    if (go) router.push('/profile')
+    return
+  }
+  if (result.ok) {
+    const auth = useAuthStore()
+    if (result.points_balance !== undefined && auth.user) {
+      auth.user.points = result.points_balance
+    }
+    if (result.point_cost > 0) toast.show(`-${result.point_cost} 💎 已返回上一场景`)
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -899,6 +896,12 @@ function onFullscreenChange() {
 
 onMounted(async () => {
   document.addEventListener('fullscreenchange', onFullscreenChange)
+  // 读取回退成本配置（后台"积分设置-返回上一场景消耗"）
+  try {
+    const r = await get('/config')
+    const c = parseInt(r.config?.backtrack_cost)
+    if (Number.isFinite(c) && c >= 0) backtrackCost.value = c
+  } catch (e) { /* 用默认值 */ }
   // 道具加载由 watch(currentScene) 触发，按场景 ID 过滤
   const gameId = route.params.gameId
   if (gameId && !game.currentScene) {
@@ -909,6 +912,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   playRequestId++
+  if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   unbindVideoEvents(videoEl.value)
   destroyHls()
