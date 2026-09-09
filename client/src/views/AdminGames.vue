@@ -77,6 +77,16 @@
           <input v-model="form.category" class="w-full px-3 py-2.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-sm outline-none focus:border-brand-purple" placeholder="例如：悬疑、爱情、冒险" />
         </div>
         <div>
+          <label class="block text-xs text-text-dim mb-1">🎨 选项主题 <span class="text-text-dimmest">（玩家播放器选项框样式）</span></label>
+          <select v-model="form.theme_id"
+            class="w-full px-3 py-2.5 bg-surface-darkest border border-border-dim rounded-lg text-white text-sm outline-none focus:border-brand-purple">
+            <option :value="null">默认主题（不绑定）</option>
+            <option v-for="t in themes" :key="t.id" :value="t.id">
+              {{ t.name }}{{ t.is_preset ? ' · 预设' : '' }}
+            </option>
+          </select>
+        </div>
+        <div>
           <label class="block text-xs text-text-dim mb-2">封面（图片或视频，后设置的自动替换现有封面）</label>
           <div class="flex items-start gap-4">
             <!-- 统一预览区 -->
@@ -198,6 +208,7 @@ const { get, post, put, del } = useApi()
 const { show } = useToast()
 
 const games = ref([])
+const themes = ref([])  // 选项主题列表
 const modalVisible = ref(false)
 const isEditing = ref(false)
 const saving = ref(false)
@@ -206,7 +217,7 @@ const coverInput = ref(null)
 const emptyForm = () => ({
   id: null, title: '', description: '', category: '', cover_image: null, cover_preview: null, cover_video_id: null, is_published: false,
   title_en: '', title_ja: '', title_ko: '', desc_en: '', desc_ja: '', desc_ko: '',
-  intro_tail_seconds: 3, menu_position: 'center'
+  intro_tail_seconds: 3, menu_position: 'center', theme_id: null
 })
 
 // 开始菜单位置选项（开场页）
@@ -329,6 +340,10 @@ async function loadGames() {
   try { const res = await get('/games'); games.value = res.games || [] } catch (e) { show('加载失败: ' + e.message) }
 }
 
+async function loadThemes() {
+  try { const res = await get('/themes'); themes.value = res.themes || [] } catch (e) {}
+}
+
 function openCreate() { resetForm(); isEditing.value = false; modalVisible.value = true }
 
 function openEdit(g) {
@@ -337,7 +352,8 @@ function openEdit(g) {
     id: g.id, title: g.title || '', description: g.description || '', category: g.category || '',
     cover_image: null, cover_preview: g.cover_video_path || g.cover_image || null, cover_video_id: g.cover_video_id || null,
     is_published: !!g.is_published,
-    intro_tail_seconds: g.intro_tail_seconds ?? 3, menu_position: g.menu_position || 'center'
+    intro_tail_seconds: g.intro_tail_seconds ?? 3, menu_position: g.menu_position || 'center',
+    theme_id: g.theme_id || null
   }
   // 编辑时同步封面视频转码状态（仍在转码则显示遮罩）
   coverVideoStatus.value = g.cover_video_id ? (g.cover_transcode_status || null) : null
@@ -516,6 +532,8 @@ async function saveGame() {
     fd.append('is_published', form.value.is_published ? '1' : '0')
     fd.append('intro_tail_seconds', String(Number.isFinite(parseInt(form.value.intro_tail_seconds)) ? parseInt(form.value.intro_tail_seconds) : 3))
     fd.append('menu_position', form.value.menu_position || 'center')
+    // 选项主题绑定（始终提交，包括 null 表示取消绑定）
+    fd.append('theme_id', form.value.theme_id || '')
     const ti = buildI18n('title_'); if (ti) fd.append('title_i18n', ti)
     const di = buildI18n('desc_'); if (di) fd.append('description_i18n', di)
     if (form.value.cover_image instanceof File) fd.append('cover_image', form.value.cover_image)
@@ -538,7 +556,7 @@ async function deleteGame(id) {
   catch (e) { show('删除失败: ' + e.message) }
 }
 
-onMounted(loadGames)
+onMounted(() => { loadGames(); loadThemes() })
 
 // 新建/编辑弹窗关闭时停止转码轮询（服务端转码不受影响，状态可在视频管理查看）
 watch(modalVisible, v => { if (!v) stopCoverTranscodePolling() })

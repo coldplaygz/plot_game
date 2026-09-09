@@ -12,6 +12,7 @@
       class="absolute inset-0 z-0 h-full w-full object-contain bg-black"
       playsinline
       preload="auto"
+      :loop="isLooping"
       @click="togglePlay"
     ></video>
 
@@ -52,17 +53,17 @@
       </div>
     </div>
 
-    <!-- ═══ 选项弹窗（无遮罩无模糊，选项直接悬浮） ═══ -->
+    <!-- ═══ 选项弹窗（无遮罩无模糊，选项直接悬浮，主题样式驱动） ═══ -->
     <div v-if="choicesActive" class="absolute inset-0 z-30 flex items-center justify-center">
-      <div class="w-[90%] max-w-md flex flex-col gap-2">
+      <div class="w-[90%] max-w-md flex flex-col gap-2" :style="themeVars">
         <button v-for="(c, i) in currentChoices" :key="c.id"
           @click="onChoose(c.id)"
-          class="flex items-center justify-between gap-3 px-4 py-3 text-left text-sm text-white bg-black/55 hover:bg-brand-purple/40 border border-white/15 hover:border-brand-purple rounded-lg transition-colors">
-          <span class="min-w-0"><span class="text-text-dim mr-2">{{ i + 1 }}.</span>{{ c.text }}</span>
+          class="choice-btn flex items-center justify-between gap-3 px-4 py-3 text-left text-sm border transition-colors">
+          <span class="min-w-0"><span class="choice-number mr-2">{{ i + 1 }}.</span>{{ c.text }}</span>
           <span v-if="c.paid"
-            class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-400/15 text-green-400 border border-green-400/30 text-xs">✓ 已购买</span>
+            class="choice-badge choice-paid shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs">✓ 已购买</span>
           <span v-else-if="c.point_cost > 0"
-            class="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-400/15 text-amber-400 border border-amber-400/30 text-xs">💎 {{ c.point_cost }}</span>
+            class="choice-badge choice-cost shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs">💎 {{ c.point_cost }}</span>
         </button>
       </div>
     </div>
@@ -407,6 +408,28 @@ let subExplicitlyOff = false  // 用户主动关闭字幕，跨场景不重新�
 const currentChoices = ref([])
 const choicesActive = ref(false)
 
+// 主题样式：将 game.themeConfig 转换为 CSS 变量字典，应用到选项容器
+// 容器 :style="themeVars" 后，子元素通过 var(--choice-xxx) 取色
+const themeVars = computed(() => {
+  const cfg = game.themeConfig
+  if (!cfg) return {}
+  const vars = {}
+  if (cfg.button_bg) vars['--choice-bg'] = cfg.button_bg
+  if (cfg.button_border) vars['--choice-border'] = cfg.button_border
+  if (cfg.button_text) vars['--choice-text'] = cfg.button_text
+  if (cfg.hover_bg) vars['--choice-hover-bg'] = cfg.hover_bg
+  if (cfg.hover_border) vars['--choice-hover-border'] = cfg.hover_border
+  if (cfg.number_color) vars['--choice-number'] = cfg.number_color
+  if (cfg.paid_bg) vars['--choice-paid-bg'] = cfg.paid_bg
+  if (cfg.paid_text) vars['--choice-paid-text'] = cfg.paid_text
+  if (cfg.paid_border) vars['--choice-paid-border'] = cfg.paid_border
+  if (cfg.cost_bg) vars['--choice-cost-bg'] = cfg.cost_bg
+  if (cfg.cost_text) vars['--choice-cost-text'] = cfg.cost_text
+  if (cfg.cost_border) vars['--choice-cost-border'] = cfg.cost_border
+  if (cfg.radius) vars['--choice-radius'] = cfg.radius
+  return vars
+})
+
 // ═══ 控制栏自动隐藏（沉浸式播放） ═══
 // 播放中 3 秒无操作自动隐藏顶栏 + 控制栏；移动鼠标/触摸/点击唤醒
 // 暂停、缓冲、选项弹出、任一菜单打开时控制栏常驻
@@ -609,10 +632,9 @@ function onDurationChange() {
   videoDuration.value = Number.isFinite(videoEl.value?.duration) ? videoEl.value.duration : 0
 }
 function onEnded() {
-  // 循环模式：重新播放
+  // 循环模式：loop 属性生效时 ended 不会触发，此分支仅作异常兜底
   if (isLooping.value) {
-    const v = videoEl.value
-    if (v) { v.currentTime = 0; v.play() }
+    restartVideo()
     return
   }
 
@@ -639,10 +661,19 @@ function togglePlay() {
 }
 
 function replayScene() {
+  restartVideo()
+}
+
+// 安全重播：ended 状态下直接 seek(0)+play 有竞态（hls.js ENDED 状态下 play 先于
+// seek 完成执行，会立即再次触发 ended，表现为最后一个分片反复播放后彻底停止）
+// 先 pause 退出 ended 状态，等 seek 完成后再 play
+function restartVideo() {
   const v = videoEl.value
   if (!v) return
+  v.pause()
+  if (v.currentTime < 0.05) { v.play().catch(() => {}); return }
+  v.addEventListener('seeked', () => v.play().catch(() => {}), { once: true })
   v.currentTime = 0
-  v.play()
 }
 
 function skipScene() {
@@ -930,6 +961,34 @@ onBeforeUnmount(() => {
 /* 隐藏 hls.js 原生渲染的字幕（我们通过 cuechange 监听自己渲染到 DOM） */
 video::cue {
   visibility: hidden;
+}
+
+/* ═══ 选项框主题样式（由 game.themeConfig 注入 CSS 变量驱动） ═══
+ * 变量未注入时使用深色兜底（保持原有视觉），保证旧游戏/无主题配置可用
+ */
+.choice-btn {
+  background: var(--choice-bg, rgba(0, 0, 0, 0.55));
+  border-color: var(--choice-border, rgba(255, 255, 255, 0.15));
+  color: var(--choice-text, #ffffff);
+  border-radius: var(--choice-radius, 8px);
+  backdrop-filter: blur(6px);
+}
+.choice-btn:hover {
+  background: var(--choice-hover-bg, rgba(139, 92, 246, 0.4));
+  border-color: var(--choice-hover-border, #8b5cf6);
+}
+.choice-number {
+  color: var(--choice-number, #9ca3af);
+}
+.choice-paid {
+  background: var(--choice-paid-bg, rgba(74, 222, 128, 0.15));
+  color: var(--choice-paid-text, #4ade80);
+  border-color: var(--choice-paid-border, rgba(74, 222, 128, 0.3));
+}
+.choice-cost {
+  background: var(--choice-cost-bg, rgba(251, 191, 36, 0.15));
+  color: var(--choice-cost-text, #fbbf24);
+  border-color: var(--choice-cost-border, rgba(251, 191, 36, 0.3));
 }
 
 /* ═══ 道具效果动画（粒子系统） ═══ */

@@ -37,6 +37,7 @@ const auth = useAuthStore()
 const navItems = [
   { path: '/admin', icon: '📊', label: '仪表盘' },
   { path: '/admin/games', icon: '🎮', label: '游戏管理' },
+  { path: '/admin/themes', icon: '🎨', label: '选项主题' },
   { path: '/admin/videos', icon: '🎬', label: '视频管理' },
   { path: '/admin/scenes', icon: '📝', label: '场景编辑' },
   { path: '/admin/props', icon: '🎁', label: '道具管理' },

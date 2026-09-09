@@ -116,10 +116,23 @@ router.get('/start', async (req, res) => {
     // 移除旧的自动存档（slot 0 为自动存档）
     await pool.query('DELETE FROM saves WHERE user_id = ? AND slot = 0', [req.user.id]);
 
+    // 加载游戏关联的选项主题样式
+    let themeConfig = null;
+    if (scene.game_id) {
+      const [themeRows] = await pool.query(
+        `SELECT ct.style_config FROM games g JOIN choice_themes ct ON g.theme_id = ct.id WHERE g.id = ?`,
+        [scene.game_id]
+      );
+      if (themeRows.length) {
+        try { themeConfig = JSON.parse(themeRows[0].style_config); } catch {}
+      }
+    }
+
     res.json({
       scene,
       is_new_game: true,
       message: '新游戏开始',
+      theme_config: themeConfig,
       transcode_warning: scene.transcode_status !== 'done' ? '该视频正在转码中，播放可能出现兼容性问题' : null
     });
   } catch (err) {

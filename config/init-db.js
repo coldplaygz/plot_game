@@ -99,6 +99,20 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
+    // ============ 4.5 选项主题表 ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS choice_themes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(50) NOT NULL COMMENT '主题名称',
+        description VARCHAR(200) DEFAULT NULL COMMENT '主题描述',
+        style_config TEXT NOT NULL COMMENT '样式JSON: button_bg/border/text, hover_bg/border, number_color, paid_*, cost_*, radius',
+        is_preset TINYINT(1) DEFAULT 0 COMMENT '是否预设主题(不可删)',
+        sort_order INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+
     // ============ 5. 视频表 ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS videos (
@@ -470,6 +484,13 @@ async function initDatabase() {
         await conn.query('ALTER TABLE games ADD FOREIGN KEY (cover_video_id) REFERENCES videos(id) ON DELETE SET NULL');
         console.log('[InitDB] 已为 games 表添加 cover_video_id 字段');
       }
+      // games 表添加 theme_id 字段（关联选项主题）
+      const [gThemeCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='games' AND COLUMN_NAME='theme_id'", [dbName]);
+      if (gThemeCols.length === 0) {
+        await conn.query("ALTER TABLE games ADD COLUMN theme_id INT DEFAULT NULL COMMENT '选项主题ID' AFTER menu_position");
+        await conn.query('ALTER TABLE games ADD FOREIGN KEY (theme_id) REFERENCES choice_themes(id) ON DELETE SET NULL');
+        console.log('[InitDB] 已为 games 表添加 theme_id 字段');
+      }
       // props 表添加 scene_id（幻想场景道具绑定到具体场景）
       const [pCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='props' AND COLUMN_NAME='scene_id'", [dbName]);
       if (pCols.length === 0) {
@@ -559,6 +580,29 @@ async function initDatabase() {
         );
       }
       console.log('[InitDB] 初始角色数据已插入 (6位女主角)');
+    }
+
+    // ============ 预设选项主题 ============
+    const [themeCnt] = await conn.query('SELECT COUNT(*) AS cnt FROM choice_themes');
+    if (themeCnt[0].cnt === 0) {
+      const presetThemes = [
+        { name: '暗夜紫', desc: '默认深色主题，紫色悬停', cfg: { button_bg: 'rgba(0,0,0,0.55)', button_border: 'rgba(255,255,255,0.15)', button_text: '#ffffff', hover_bg: 'rgba(139,92,246,0.4)', hover_border: '#8b5cf6', number_color: '#9ca3af', paid_bg: 'rgba(74,222,128,0.15)', paid_text: '#4ade80', paid_border: 'rgba(74,222,128,0.3)', cost_bg: 'rgba(251,191,36,0.15)', cost_text: '#fbbf24', cost_border: 'rgba(251,191,36,0.3)', radius: '8px' } },
+        { name: '霓虹粉', desc: '赛博朋克风，粉色霓虹光', cfg: { button_bg: 'rgba(20,5,30,0.7)', button_border: 'rgba(236,72,153,0.4)', button_text: '#fce7f3', hover_bg: 'rgba(236,72,153,0.35)', hover_border: '#ec4899', number_color: '#f9a8d4', paid_bg: 'rgba(52,211,153,0.15)', paid_text: '#34d399', paid_border: 'rgba(52,211,153,0.3)', cost_bg: 'rgba(251,191,36,0.15)', cost_text: '#fbbf24', cost_border: 'rgba(251,191,36,0.3)', radius: '10px' } },
+        { name: '翠绿森林', desc: '自然清新，翠绿点缀', cfg: { button_bg: 'rgba(5,20,10,0.65)', button_border: 'rgba(34,197,94,0.35)', button_text: '#d1fae5', hover_bg: 'rgba(34,197,94,0.3)', hover_border: '#22c55e', number_color: '#86efac', paid_bg: 'rgba(132,204,22,0.15)', paid_text: '#84cc16', paid_border: 'rgba(132,204,22,0.3)', cost_bg: 'rgba(250,204,21,0.15)', cost_text: '#facc15', cost_border: 'rgba(250,204,21,0.3)', radius: '8px' } },
+        { name: '琥珀金辉', desc: '温暖奢华，金色光芒', cfg: { button_bg: 'rgba(25,15,5,0.7)', button_border: 'rgba(245,158,11,0.4)', button_text: '#fef3c7', hover_bg: 'rgba(245,158,11,0.3)', hover_border: '#f59e0b', number_color: '#fcd34d', paid_bg: 'rgba(132,204,22,0.15)', paid_text: '#84cc16', paid_border: 'rgba(132,204,22,0.3)', cost_bg: 'rgba(251,191,36,0.2)', cost_text: '#fbbf24', cost_border: 'rgba(251,191,36,0.4)', radius: '8px' } },
+        { name: '深海蓝', desc: '沉静深邃，海洋蓝调', cfg: { button_bg: 'rgba(0,15,30,0.65)', button_border: 'rgba(59,130,246,0.35)', button_text: '#dbeafe', hover_bg: 'rgba(59,130,246,0.3)', hover_border: '#3b82f6', number_color: '#93c5fd', paid_bg: 'rgba(74,222,128,0.15)', paid_text: '#4ade80', paid_border: 'rgba(74,222,128,0.3)', cost_bg: 'rgba(251,191,36,0.15)', cost_text: '#fbbf24', cost_border: 'rgba(251,191,36,0.3)', radius: '8px' } },
+        { name: '玫瑰红', desc: '热烈浪漫，玫瑰色调', cfg: { button_bg: 'rgba(30,5,10,0.65)', button_border: 'rgba(244,63,94,0.35)', button_text: '#fecdd3', hover_bg: 'rgba(244,63,94,0.3)', hover_border: '#f43f5e', number_color: '#fda4af', paid_bg: 'rgba(74,222,128,0.15)', paid_text: '#4ade80', paid_border: 'rgba(74,222,128,0.3)', cost_bg: 'rgba(251,191,36,0.15)', cost_text: '#fbbf24', cost_border: 'rgba(251,191,36,0.3)', radius: '8px' } },
+        { name: '暗夜青', desc: '清冷幽静，青色微光', cfg: { button_bg: 'rgba(0,20,25,0.65)', button_border: 'rgba(20,184,166,0.35)', button_text: '#ccfbf1', hover_bg: 'rgba(20,184,166,0.3)', hover_border: '#14b8a6', number_color: '#5eead4', paid_bg: 'rgba(74,222,128,0.15)', paid_text: '#4ade80', paid_border: 'rgba(74,222,128,0.3)', cost_bg: 'rgba(251,191,36,0.15)', cost_text: '#fbbf24', cost_border: 'rgba(251,191,36,0.3)', radius: '8px' } },
+        { name: '极简白', desc: '浅色主题，简约明亮', cfg: { button_bg: 'rgba(255,255,255,0.92)', button_border: 'rgba(0,0,0,0.1)', button_text: '#1f2937', hover_bg: 'rgba(99,102,241,0.1)', hover_border: '#6366f1', number_color: '#6b7280', paid_bg: 'rgba(5,150,105,0.12)', paid_text: '#059669', paid_border: 'rgba(5,150,105,0.25)', cost_bg: 'rgba(217,119,6,0.12)', cost_text: '#d97706', cost_border: 'rgba(217,119,6,0.25)', radius: '8px' } }
+      ];
+      for (let i = 0; i < presetThemes.length; i++) {
+        const th = presetThemes[i];
+        await conn.query(
+          'INSERT INTO choice_themes (name, description, style_config, is_preset, sort_order) VALUES (?, ?, ?, 1, ?)',
+          [th.name, th.desc, JSON.stringify(th.cfg), i]
+        );
+      }
+      console.log('[InitDB] 预设选项主题已插入 (' + presetThemes.length + '个)');
     }
 
     console.log('[InitDB] 数据库初始化完成!');

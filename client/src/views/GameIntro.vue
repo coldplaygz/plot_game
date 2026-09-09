@@ -9,7 +9,7 @@
       playsinline
       preload="auto"
       class="absolute inset-0 w-full h-full object-cover"
-      @ended="showMenu"
+      @ended="onEnded"
       @timeupdate="onTimeUpdate"
       @error="onVideoError"
       @loadedmetadata="tryPlay"
@@ -147,10 +147,23 @@ onBeforeUnmount(() => {
   if (videoEl.value) videoEl.value.pause()
 })
 
+// 元数据加载标记 + 时长缓存
+// 线上公网抖动时浏览器会静默重新拉取视频（不触发 error），currentTime 归零、
+// loadedmetadata 二次触发——若放任 tryPlay 直接 play() 会从片头重播，打断尾段循环
+let metadataLoaded = false
+let knownDuration = 0
+
 // 尝试有声播放，被浏览器自动播放策略拦截时降级为静音播放
 function tryPlay() {
   const v = videoEl.value
   if (!v) return
+  if (Number.isFinite(v.duration) && v.duration > 0) knownDuration = v.duration
+  if (metadataLoaded) {
+    // 中途重新加载（网络抖动后浏览器自动重试）：不重头播放，恢复尾段循环
+    if (menuVisible.value && !v.loop) restartTailLoop()
+    return
+  }
+  metadataLoaded = true
   v.play().catch(() => {
     v.muted = true
     v.play().catch(() => {})
@@ -170,15 +183,39 @@ function showMenu() {
   if (!v) return
   const tail = tailSeconds.value
   if (tail <= 0 || !Number.isFinite(v.duration) || v.duration <= tail) {
-    // 尾段配置为 0 或视频比尾段还短 → 整段循环
+    // 尾段配置为 0 或视频比尾段还短 → 整段循环（原生 loop，无接缝）
     v.loop = true
     v.currentTime = 0
     v.play().catch(() => {})
   } else {
     v.loop = false
-    v.currentTime = Math.max(0, v.duration - tail)
-    v.play().catch(() => {})
+    restartTailLoop()
   }
+}
+
+// 视频自然结束：菜单未显示 → 首次进入菜单；菜单已显示 → 兜底重启尾段循环
+// （timeupdate 拦截窗口 0.15s 小于其触发间隔 ~0.25s，存在漏拦竞态，
+//   转码后视频的时间轴对齐不同会触发，表现为循环若干次后卡在结尾）
+function onEnded() {
+  if (!menuVisible.value) { showMenu(); return }
+  if (videoEl.value?.loop) return
+  restartTailLoop()
+}
+
+// 安全重启尾段循环：ended 状态下直接 seek+play 有二次竞态（play 可能先于
+// seek 完成执行，立即再次触发 ended），先 pause 退出 ended 状态再走 seeked→play
+// duration 用 knownDuration 兜底：加载中断瞬间 v.duration 可能瞬时为 0，
+// 会让 target 误算成 0 → 重头播放
+function restartTailLoop() {
+  const v = videoEl.value
+  const dur = (Number.isFinite(v?.duration) && v.duration > 0) ? v.duration : knownDuration
+  if (!v || !Number.isFinite(dur) || dur <= 0) return
+  const tail = tailSeconds.value
+  const target = (tail <= 0 || dur <= tail) ? 0 : Math.max(0, dur - tail)
+  if (Math.abs(v.currentTime - target) < 0.05) { v.play().catch(() => {}); return }
+  v.pause()
+  v.addEventListener('seeked', () => v.play().catch(() => {}), { once: true })
+  v.currentTime = target
 }
 
 // 尾段循环：播放到末尾前回跳，避免 ended 造成的停顿

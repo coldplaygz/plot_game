@@ -24,6 +24,7 @@ const routes = [
       { path: 'scenes', name: 'scenes', component: () => import('../views/AdminScenes.vue') },
       { path: 'props', name: 'admin-props', component: () => import('../views/AdminProps.vue') },
       { path: 'games', name: 'admin-games', component: () => import('../views/AdminGames.vue') },
+      { path: 'themes', name: 'admin-themes', component: () => import('../views/AdminThemes.vue') },
       { path: 'users', name: 'admin-users', component: () => import('../views/AdminUsers.vue') },
       { path: 'recharge', name: 'admin-recharge', component: () => import('../views/AdminRecharge.vue') },
       { path: 'points-log', name: 'admin-points-log', component: () => import('../views/AdminPointsLog.vue') },

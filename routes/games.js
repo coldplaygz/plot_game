@@ -116,9 +116,12 @@ router.get('/:id', authenticate, async (req, res) => {
         (SELECT COUNT(*) FROM videos v WHERE v.game_id = g.id) AS video_count,
         (SELECT COUNT(*) FROM scenes s WHERE s.game_id = g.id) AS scene_count,
         cv.file_path AS cover_video_path,
-        cv.transcode_status AS cover_transcode_status
+        cv.transcode_status AS cover_transcode_status,
+        ct.style_config AS theme_config,
+        ct.name AS theme_name
        FROM games g
        LEFT JOIN videos cv ON g.cover_video_id = cv.id
+       LEFT JOIN choice_themes ct ON g.theme_id = ct.id
        WHERE g.id = ?`,
       [gameId]
     );
@@ -128,6 +131,10 @@ router.get('/:id', authenticate, async (req, res) => {
     }
 
     const game = rows[0];
+    // 解析主题样式 JSON
+    if (game.theme_config) {
+      try { game.theme_config = JSON.parse(game.theme_config); } catch {}
+    }
 
     // 获取关联的视频列表
     const [videos] = await pool.query(
@@ -178,11 +185,12 @@ router.post('/', authenticate, authorize('admin', 'editor'), coverUpload.single(
     const coverVideoId = req.body.cover_video_id ? parseInt(req.body.cover_video_id) : null;
 
     const [result] = await pool.query(
-      `INSERT INTO games (title, title_i18n, cover_image, cover_video_id, description, description_i18n, category, sort_order, is_published, intro_tail_seconds, menu_position)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO games (title, title_i18n, cover_image, cover_video_id, description, description_i18n, category, sort_order, is_published, intro_tail_seconds, menu_position, theme_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [title, req.body.title_i18n || null, coverImage, coverVideoId, description || '', req.body.description_i18n || null, category || null, parseInt(sort_order) || 0, is_published !== undefined ? (is_published ? 1 : 0) : 1,
        Number.isFinite(parseInt(req.body.intro_tail_seconds)) ? parseInt(req.body.intro_tail_seconds) : 3,
-       req.body.menu_position || 'center']
+       req.body.menu_position || 'center',
+       req.body.theme_id ? parseInt(req.body.theme_id) : null]
     );
 
     res.status(201).json({
@@ -219,6 +227,7 @@ router.put('/:id', authenticate, authorize('admin', 'editor'), coverUpload.singl
     if (is_published !== undefined) { fields.push('is_published = ?'); values.push(is_published ? 1 : 0); }
     if (req.body.intro_tail_seconds !== undefined) { fields.push('intro_tail_seconds = ?'); values.push(parseInt(req.body.intro_tail_seconds) || 0); }
     if (req.body.menu_position !== undefined) { fields.push('menu_position = ?'); values.push(req.body.menu_position); }
+    if (req.body.theme_id !== undefined) { fields.push('theme_id = ?'); values.push(req.body.theme_id ? parseInt(req.body.theme_id) : null); }
 
     // 处理封面图
     if (req.file) {

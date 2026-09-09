@@ -15,6 +15,7 @@ export const useGameStore = defineStore('game', () => {
   const isEnding = ref(false)
   const ending = ref(null)
   const currentGameId = ref(null)  // 持久化，returnToLobby 不清理
+  const themeConfig = ref(null)    // 选项主题样式配置（从 /play/start 返回）
   const sceneHistory = ref([])     // 场景历史栈（存 scene id），供"返回上一场景"
   const choiceDelayId = ref(null)
   const timerInterval = ref(null)
@@ -43,6 +44,7 @@ export const useGameStore = defineStore('game', () => {
     if (res.error) { toast.show(res.error); return }
     playSeconds.value = 0
     sceneHistory.value = []   // 新游戏清空历史
+    themeConfig.value = res.theme_config || null
     loadScene(res.scene)
   }
 
@@ -211,7 +213,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   return {
-    currentScene, isEnding, ending, currentGameId, sceneHistory,
+    currentScene, isEnding, ending, currentGameId, sceneHistory, themeConfig,
     choiceDelayId, timerInterval, showingChoices, currentAudioEl,
     playSeconds,
     startNewGame, loadScene, makeChoice, backtrack,
