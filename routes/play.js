@@ -383,9 +383,10 @@ router.post('/choose', async (req, res) => {
  */
 async function getSceneChoices(sceneId, affections, lang = '', userId = null) {
   const [allChoices] = await pool.query(`
-    SELECT c.*, ns.title AS next_scene_title
+    SELECT c.*, ns.title AS next_scene_title, ct.style_config AS theme_config
     FROM choices c
     LEFT JOIN scenes ns ON c.next_scene_id = ns.id
+    LEFT JOIN choice_themes ct ON c.theme_id = ct.id
     WHERE c.scene_id = ?
     ORDER BY c.sort_order ASC
   `, [sceneId]);
@@ -445,6 +446,10 @@ async function getSceneChoices(sceneId, affections, lang = '', userId = null) {
         timer_seconds: choice.timer_seconds,
         point_cost: choice.point_cost || 0,
         paid: paidSet.has(choice.id),  // 已付费：重复选择不再收费
+        is_auto_jump: !!choice.is_auto_jump,  // 直接跳转：唯一选项时不弹选项卡自动执行
+        theme_config: choice.theme_config ? (() => {
+          try { return JSON.parse(choice.theme_config); } catch { return null; }
+        })() : null,  // 选项级主题（NULL=跟随游戏主题）
         affection_hint: rules.map(r => ({
           character_name: r.character_name,
           direction: r.delta > 0 ? 'up' : r.delta < 0 ? 'down' : 'none'

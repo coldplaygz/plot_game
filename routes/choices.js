@@ -8,9 +8,10 @@ const router = express.Router();
 router.get('/scene/:sceneId', authenticate, async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT c.*, ns.title AS next_scene_title
+      SELECT c.*, ns.title AS next_scene_title, ct.name AS theme_name
       FROM choices c
       LEFT JOIN scenes ns ON c.next_scene_id = ns.id
+      LEFT JOIN choice_themes ct ON c.theme_id = ct.id
       WHERE c.scene_id = ?
       ORDER BY c.sort_order ASC
     `, [req.params.sceneId]);
@@ -41,7 +42,7 @@ router.get('/scene/:sceneId', authenticate, async (req, res) => {
 // 创建选择项
 router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { scene_id, text, next_scene_id, sort_order, timer_seconds, point_cost } = req.body;
+    const { scene_id, text, next_scene_id, sort_order, timer_seconds, point_cost, theme_id, is_auto_jump } = req.body;
     if (!scene_id || !text) return res.status(400).json({ error: '场景ID和选项文本不能为空' });
 
     // 校验 next_scene_id 与当前场景同 game_id（避免跨游戏跳转）
@@ -57,8 +58,8 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
     }
 
     const [result] = await pool.query(
-      'INSERT INTO choices (scene_id, text, next_scene_id, sort_order, timer_seconds, point_cost) VALUES (?, ?, ?, ?, ?, ?)',
-      [scene_id, text, next_scene_id || null, sort_order || 0, timer_seconds || 0, point_cost || 0]
+      'INSERT INTO choices (scene_id, text, next_scene_id, sort_order, timer_seconds, point_cost, theme_id, is_auto_jump) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [scene_id, text, next_scene_id || null, sort_order || 0, timer_seconds || 0, point_cost || 0, theme_id || null, is_auto_jump ? 1 : 0]
     );
     res.status(201).json({ message: '选择项创建成功', choice: { id: result.insertId, text } });
   } catch (err) {
@@ -70,7 +71,7 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
 // 更新选择项
 router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { text, next_scene_id, sort_order, timer_seconds, point_cost } = req.body;
+    const { text, next_scene_id, sort_order, timer_seconds, point_cost, theme_id, is_auto_jump } = req.body;
 
     // 若修改 next_scene_id，校验与当前选项所属场景同 game_id
     if (next_scene_id !== undefined && next_scene_id) {
@@ -95,6 +96,8 @@ router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) 
     if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(sort_order)); }
     if (timer_seconds !== undefined) { fields.push('timer_seconds = ?'); values.push(parseInt(timer_seconds)); }
     if (point_cost !== undefined) { fields.push('point_cost = ?'); values.push(parseInt(point_cost)); }
+    if (theme_id !== undefined) { fields.push('theme_id = ?'); values.push(theme_id ? parseInt(theme_id) : null); }
+    if (is_auto_jump !== undefined) { fields.push('is_auto_jump = ?'); values.push(is_auto_jump ? 1 : 0); }
     if (fields.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
     values.push(req.params.id);
     await pool.query(`UPDATE choices SET ${fields.join(', ')} WHERE id = ?`, values);

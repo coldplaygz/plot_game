@@ -166,9 +166,12 @@ async function initDatabase() {
         next_scene_id INT DEFAULT NULL COMMENT '跳转目标场景(NULL=停留)',
         sort_order INT DEFAULT 0,
         timer_seconds INT DEFAULT 0 COMMENT '此项单独倒计时,0=使用场景默认',
+        theme_id INT DEFAULT NULL COMMENT '选项主题ID(NULL=跟随游戏主题)',
+        is_auto_jump TINYINT(1) DEFAULT 0 COMMENT '直接跳转:唯一选项时不弹选项卡,选项出现时刻自动执行',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
-        FOREIGN KEY (next_scene_id) REFERENCES scenes(id) ON DELETE SET NULL
+        FOREIGN KEY (next_scene_id) REFERENCES scenes(id) ON DELETE SET NULL,
+        FOREIGN KEY (theme_id) REFERENCES choice_themes(id) ON DELETE SET NULL
       ) ENGINE=InnoDB
     `);
 
@@ -278,6 +281,25 @@ async function initDatabase() {
         console.log('[InitDB] 已为 choices 表添加 point_cost 字段');
       }
     } catch (e) { console.warn('[InitDB] 添加 point_cost 字段失败 (可能已存在):', e.message); }
+
+    // ============ 13c. choices 表添加 theme_id 字段（选项级主题） ============
+    try {
+      const [cThemeCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='choices' AND COLUMN_NAME='theme_id'", [dbName]);
+      if (cThemeCols.length === 0) {
+        await conn.query("ALTER TABLE choices ADD COLUMN theme_id INT DEFAULT NULL COMMENT '选项主题ID(NULL=跟随游戏主题)' AFTER point_cost");
+        await conn.query('ALTER TABLE choices ADD FOREIGN KEY (theme_id) REFERENCES choice_themes(id) ON DELETE SET NULL');
+        console.log('[InitDB] 已为 choices 表添加 theme_id 字段');
+      }
+    } catch (e) { console.warn('[InitDB] 添加 theme_id 字段失败 (可能已存在):', e.message); }
+
+    // ============ 13d. choices 表添加 is_auto_jump 字段（直接跳转） ============
+    try {
+      const [ajCols] = await conn.query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='choices' AND COLUMN_NAME='is_auto_jump'", [dbName]);
+      if (ajCols.length === 0) {
+        await conn.query("ALTER TABLE choices ADD COLUMN is_auto_jump TINYINT(1) DEFAULT 0 COMMENT '直接跳转:唯一选项时不弹选项卡,选项出现时刻自动执行' AFTER theme_id");
+        console.log('[InitDB] 已为 choices 表添加 is_auto_jump 字段');
+      }
+    } catch (e) { console.warn('[InitDB] 添加 is_auto_jump 字段失败 (可能已存在):', e.message); }
 
     // ============ 14. 充值记录表 ============
     await conn.query(`

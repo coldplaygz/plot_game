@@ -55,9 +55,11 @@
 
     <!-- ═══ 选项弹窗（无遮罩无模糊，选项直接悬浮，主题样式驱动） ═══ -->
     <div v-if="choicesActive" class="absolute inset-0 z-30 flex items-center justify-center">
+      <!-- 容器注入游戏级主题变量；单个选项有独立主题时在按钮上覆盖 -->
       <div class="w-[90%] max-w-md flex flex-col gap-2" :style="themeVars">
         <button v-for="(c, i) in currentChoices" :key="c.id"
           @click="onChoose(c.id)"
+          :style="choiceVars(c)"
           class="choice-btn flex items-center justify-between gap-3 px-4 py-3 text-left text-sm border transition-colors">
           <span class="min-w-0"><span class="choice-number mr-2">{{ i + 1 }}.</span>{{ c.text }}</span>
           <span v-if="c.paid"
@@ -275,6 +277,16 @@
         🎬 幻想场景 · 播放结束后自动返回
       </div>
     </div>
+
+    <!-- ═══ 过场动画层（无选项场景播完/跳过后自动流转到下一场景） ═══ -->
+    <Transition name="trans">
+      <div v-if="transitionActive"
+        class="absolute inset-0 z-[60] bg-black flex flex-col items-center justify-center gap-3 px-8 text-center">
+        <div v-if="transitionChapter" class="trans-chapter text-xs text-white/40 tracking-[0.4em]">{{ transitionChapter }}</div>
+        <div class="trans-title text-lg sm:text-xl text-white/90 font-medium max-w-md">{{ transitionTitle || '…' }}</div>
+        <div class="trans-line w-28 h-px bg-white/30"></div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -408,10 +420,15 @@ let subExplicitlyOff = false  // 用户主动关闭字幕，跨场景不重新�
 const currentChoices = ref([])
 const choicesActive = ref(false)
 
+// ═══ 过场动画（无选项场景自动流转） ═══
+const transitionActive = ref(false)    // 过场层显示（Transition 淡入淡出）
+const transitionChapter = ref('')      // 下一场景章节名
+const transitionTitle = ref('')        // 下一场景标题
+
 // 主题样式：将 game.themeConfig 转换为 CSS 变量字典，应用到选项容器
 // 容器 :style="themeVars" 后，子元素通过 var(--choice-xxx) 取色
-const themeVars = computed(() => {
-  const cfg = game.themeConfig
+// 主题样式配置 → CSS 变量字典（游戏级 themeVars 与选项级 choiceVars 共用）
+function cfgToVars(cfg) {
   if (!cfg) return {}
   const vars = {}
   if (cfg.button_bg) vars['--choice-bg'] = cfg.button_bg
@@ -428,7 +445,15 @@ const themeVars = computed(() => {
   if (cfg.cost_border) vars['--choice-cost-border'] = cfg.cost_border
   if (cfg.radius) vars['--choice-radius'] = cfg.radius
   return vars
-})
+}
+
+// 游戏级主题：注入选项容器（未设置主题的选项继承）
+const themeVars = computed(() => cfgToVars(game.themeConfig))
+
+// 选项级主题：注入单个选项按钮，覆盖容器的游戏级变量
+function choiceVars(c) {
+  return c.theme_config ? cfgToVars(c.theme_config) : {}
+}
 
 // ═══ 控制栏自动隐藏（沉浸式播放） ═══
 // 播放中 3 秒无操作自动隐藏顶栏 + 控制栏；移动鼠标/触摸/点击唤醒
@@ -641,16 +666,24 @@ function onEnded() {
   const scene = game.currentScene
   if (!scene) return
 
-  // 最后一个场景（结局场景）：跳转结束页
-  if (scene.is_ending || !scene.choices || scene.choices.length === 0) {
+  // 结局场景：跳转结束页
+  if (scene.is_ending) {
     router.push('/ending')
     return
   }
 
-  // 非结局场景：视频结束兜底弹出选项
-  if (!choicesActive.value) {
-    showChoices(scene.choices, scene.choice_timer)
+  // 有选项：视频结束弹选项（直接跳转则自动执行）
+  if (scene.choices && scene.choices.length > 0) {
+    const aj = autoJumpChoice(scene)
+    if (aj && !choicesActive.value) { startAutoJump(aj); return }
+    if (!choicesActive.value) {
+      showChoices(scene.choices, scene.choice_timer)
+    }
+    return
   }
+
+  // 无选项非结局：结束游戏进结局页（Ending 页无 ending 数据时显示 THE END）
+  router.push('/ending')
 }
 
 function togglePlay() {
@@ -679,8 +712,51 @@ function restartVideo() {
 function skipScene() {
   const v = videoEl.value
   if (!v) return
-  // 跳到视频末尾，触发 onEnded 逻辑
+  // 跳到视频末尾，触发 onEnded 逻辑（弹选项 / 直接跳转 / 进结局页）
   v.currentTime = (videoDuration.value || v.duration || 0) - 0.1
+}
+
+// 直接跳转：唯一选项标记 is_auto_jump 时，选项出现时刻自动执行该选项
+// 过场动画视觉：黑幕淡入 → makeChoice 获取下一场景（内部已 loadScene）→ 淡出
+// 好感度规则、扣积分、压历史栈、自动存档均走 makeChoice 正常流程
+async function startAutoJump(choice) {
+  if (transitionActive.value) return
+  transitionActive.value = true
+  transitionChapter.value = ''
+  transitionTitle.value = ''
+
+  // 暂停当前视频（保留最后一帧，由过场黑幕盖住）
+  videoEl.value?.pause()
+
+  // 执行选项：成功 {scene}/{finished}，积分不足 {insufficientPoints}，失败 null
+  const choicePromise = game.makeChoice(choice.id).then(r => {
+    if (r && r.scene && transitionActive.value) {
+      transitionChapter.value = r.scene.chapter || ''
+      transitionTitle.value = r.scene.title || ''
+    }
+    return r
+  })
+
+  // 保证动画最短展示时长（黑幕淡入 + 标题渐显 + 停留）
+  const [result] = await Promise.all([
+    choicePromise,
+    new Promise(r => setTimeout(r, 2000))
+  ])
+  if (!transitionActive.value) return  // 中途被中断（返回大厅/组件卸载）
+
+  transitionActive.value = false  // 淡出（成功时 makeChoice 已 loadScene，新视频在黑幕后缓冲）
+
+  if (!result || result.insufficientPoints) {
+    // 失败或积分不足：改弹选项卡交还用户手动选择（点击走正常 onChoose 流程）
+    const scene = game.currentScene
+    if (scene && scene.choices && scene.choices.length) {
+      showChoices(scene.choices, scene.choice_timer)
+    }
+  } else if (result.finished) {
+    // 选项无跳转目标：进入结束页
+    router.push('/ending')
+  }
+  // result.scene：makeChoice 内部已 loadScene，watch(currentScene) 自动触发 playScene
 }
 
 function toggleLoop() {
@@ -771,6 +847,16 @@ async function playScene() {
   isBuffering.value = false
 }
 
+// 直接跳转检测：场景只有一个选项且标记 is_auto_jump
+// 付费未购时不能静默扣费，仍走弹选项卡流程
+function autoJumpChoice(scene) {
+  if (!scene || !scene.choices || scene.choices.length !== 1) return null
+  const c = scene.choices[0]
+  if (!c.is_auto_jump) return null
+  if (c.point_cost > 0 && !c.paid) return null
+  return c
+}
+
 // 选项弹出检测
 function checkChoicePopup() {
   const scene = game.currentScene
@@ -779,6 +865,9 @@ function checkChoicePopup() {
   const delay = scene.choice_delay
   if (!delay || delay <= 0) return
   if (videoCurrentTime.value >= delay) {
+    // 直接跳转：到选项弹出时刻自动执行，不弹选项卡
+    const aj = autoJumpChoice(scene)
+    if (aj) { startAutoJump(aj); return }
     showChoices(scene.choices, scene.choice_timer)
   }
 }
@@ -829,6 +918,7 @@ async function onChoose(choiceId) {
 function onReturnToLobby() {
   playRequestId++
   showBackMenu.value = false
+  transitionActive.value = false  // 中断进行中的过场动画
   destroyHls()
   if (videoEl.value) {
     videoEl.value.pause()
@@ -943,6 +1033,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   playRequestId++
+  transitionActive.value = false  // 中断进行中的过场动画
   if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   unbindVideoEvents(videoEl.value)
@@ -961,6 +1052,37 @@ onBeforeUnmount(() => {
 /* 隐藏 hls.js 原生渲染的字幕（我们通过 cuechange 监听自己渲染到 DOM） */
 video::cue {
   visibility: hidden;
+}
+
+/* ═══ 过场动画（无选项场景自动流转到下一场景） ═══
+ * 黑幕淡入淡出由 Vue <Transition name="trans"> 管理；
+ * 章节名/标题/装饰线在黑幕盖住后依次渐显
+ */
+.trans-enter-active,
+.trans-leave-active {
+  transition: opacity 0.5s ease;
+}
+.trans-enter-from,
+.trans-leave-to {
+  opacity: 0;
+}
+.trans-chapter {
+  animation: trans-fade-up 0.6s ease 0.45s both;
+}
+.trans-title {
+  animation: trans-fade-up 0.7s ease 0.55s both;
+}
+.trans-line {
+  animation: trans-line-grow 0.8s ease 0.7s both;
+  transform-origin: center;
+}
+@keyframes trans-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes trans-line-grow {
+  from { transform: scaleX(0); opacity: 0; }
+  to { transform: scaleX(1); opacity: 1; }
 }
 
 /* ═══ 选项框主题样式（由 game.themeConfig 注入 CSS 变量驱动） ═══

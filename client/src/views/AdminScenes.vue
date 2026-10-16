@@ -34,7 +34,7 @@
         </tr>
         <tr v-for="s in pageScenes" :key="s.id" class="hover:bg-[#1a1a3e]">
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.id }}</td>
-          <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.is_start ? '⭐ ' : '' }}{{ s.title }}</td>
+          <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.is_start ? '⭐ ' : '' }}<span v-if="s.choice_count === 1 && s.auto_jump_count > 0" class="inline-flex items-center gap-[3px] px-2 py-[2px] rounded-[10px] text-[11px] mr-1 bg-amber-500/15 text-amber-400 align-middle">⚡直接</span>{{ s.title }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dim">{{ s.game_title || '-' }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.chapter || '-' }}</td>
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ s.video_title || '无视频' }}</td>
@@ -149,20 +149,28 @@
             <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">选项文本</th>
             <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">跳转场景</th>
             <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">积分</th>
+            <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">主题</th>
             <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">条件</th>
             <th class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a] text-text-dimmer font-medium bg-[#111122] sticky top-0">操作</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="!choices.length">
-            <td colspan="6" class="text-text-dimmest px-[14px] py-[10px]">暂无选项</td>
+            <td colspan="7" class="text-text-dimmest px-[14px] py-[10px]">暂无选项</td>
           </tr>
           <tr v-for="c in choices" :key="c.id" class="hover:bg-[#1a1a3e]">
             <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ c.id }}</td>
-            <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ c.text }}</td>
+            <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
+                <span v-if="c.is_auto_jump" class="inline-flex items-center gap-[3px] px-2 py-[2px] rounded-[10px] text-[11px] mr-1 bg-amber-500/15 text-amber-400">⚡直接</span>{{ c.text }}
+              </td>
             <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">{{ c.next_scene_title || '无' }}</td>
             <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
               <span :class="c.point_cost > 0 ? 'text-brand-purple' : 'text-text-dimmest'">{{ c.point_cost > 0 ? '💎'+c.point_cost : '-' }}</span>
+            </td>
+            <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
+              <span v-if="c.theme_name"
+                class="inline-flex items-center gap-[3px] px-2 py-[2px] rounded-[10px] text-[11px] bg-brand-purple/15 text-brand-purple">🎨 {{ c.theme_name }}</span>
+              <span v-else class="text-text-dimmest text-xs">跟随游戏</span>
             </td>
             <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
               <span v-if="!c.conditions?.length">-</span>
@@ -216,12 +224,33 @@
         </select>
       </div>
       <div class="mb-[14px]">
+        <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" v-model="choiceForm.is_auto_jump" class="w-4 h-4 accent-brand-purple cursor-pointer" />
+          <span class="text-[13px] text-white">⚡ 直接跳转</span>
+        </label>
+        <p class="text-[11px] text-text-dimmer mt-1">仅当该场景只有这一个选项时生效：不弹选项卡，视频播完自动进入目标场景</p>
+      </div>
+      <div class="mb-[14px]">
         <label class="block text-xs text-text-dim mb-1">排序</label>
         <input v-model.number="choiceForm.sort_order" type="number" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
       </div>
       <div class="mb-[14px]">
         <label class="block text-xs text-text-dim mb-1">单独计时(秒,0=用场景默认)</label>
         <input v-model.number="choiceForm.timer_seconds" type="number" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">🎨 选项主题 <span class="text-text-dimmer">(不设置则跟随游戏主题)</span></label>
+        <select v-model="choiceForm.theme_id" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple">
+          <option :value="null">跟随游戏主题</option>
+          <option v-for="t in themes" :key="t.id" :value="t.id">{{ t.name }}{{ t.is_preset ? ' · 预设' : '' }}</option>
+        </select>
+        <!-- 实时预览 -->
+        <div v-if="choiceForm.theme_id" class="mt-2 p-2.5 bg-surface-darkest border border-border-dim rounded-lg" :style="previewVars">
+          <div class="choice-btn flex items-center justify-between gap-2 px-3 py-2 text-left text-xs border">
+            <span><span class="choice-number mr-1">1.</span>{{ choiceForm.text || '选项预览' }}</span>
+            <span v-if="choiceForm.point_cost > 0" class="choice-cost inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px]">💎 {{ choiceForm.point_cost }}</span>
+          </div>
+        </div>
       </div>
 
       <!-- Point Cost -->
@@ -440,6 +469,35 @@ const choicesSceneId = ref(0)
 const choicesSceneTitle = ref('')
 const choices = ref([])
 const allScenes = ref([])
+const themes = ref([])  // 选项主题列表
+
+async function loadThemes() {
+  try { const r = await get('/themes'); themes.value = r.themes || [] } catch (e) {}
+}
+
+// 选中主题的 style_config（选项编辑弹窗预览用）
+const selectedThemeCfg = computed(() => {
+  const t = themes.value.find(t => t.id === choiceForm.value.theme_id)
+  return t?.style_config || null
+})
+
+// 主题样式 → CSS 变量（与 GamePlayer.vue themeVars 同步）
+const previewVars = computed(() => {
+  const cfg = selectedThemeCfg.value
+  if (!cfg) return {}
+  const v = {}
+  if (cfg.button_bg) v['--choice-bg'] = cfg.button_bg
+  if (cfg.button_border) v['--choice-border'] = cfg.button_border
+  if (cfg.button_text) v['--choice-text'] = cfg.button_text
+  if (cfg.hover_bg) v['--choice-hover-bg'] = cfg.hover_bg
+  if (cfg.hover_border) v['--choice-hover-border'] = cfg.hover_border
+  if (cfg.number_color) v['--choice-number'] = cfg.number_color
+  if (cfg.cost_bg) v['--choice-cost-bg'] = cfg.cost_bg
+  if (cfg.cost_text) v['--choice-cost-text'] = cfg.cost_text
+  if (cfg.cost_border) v['--choice-cost-border'] = cfg.cost_border
+  if (cfg.radius) v['--choice-radius'] = cfg.radius
+  return v
+})
 
 async function openChoicesModal(sceneId) {
   choicesSceneId.value = sceneId
@@ -450,6 +508,12 @@ async function openChoicesModal(sceneId) {
     ])
     choicesSceneTitle.value = sr.scene?.title || ''
     choices.value = cr.choices || []
+    // 同步场景列表中的选项计数与直接跳转标记（新增/删除/编辑选项后无需刷新整页）
+    const sceneRow = scenes.value.find(s => s.id === sceneId)
+    if (sceneRow) {
+      sceneRow.choice_count = choices.value.length
+      sceneRow.auto_jump_count = choices.value.filter(c => c.is_auto_jump).length
+    }
     // 按当前场景的 game_id 过滤跳转场景列表，避免跨游戏引用
     const sceneGameId = sr.scene?.game_id || null
     const params = {}
@@ -458,6 +522,8 @@ async function openChoicesModal(sceneId) {
     if (!sceneGameId) {
       show('提示：该场景未归属游戏，跳转场景列表包含全部场景，请确认引用正确')
     }
+    // 主题列表（选项级主题选择）
+    if (!themes.value.length) loadThemes()
   } catch (e) {
     show('加载选项失败')
     return
@@ -473,7 +539,7 @@ const choiceForm = ref(getEmptyChoiceForm())
 function getEmptyChoiceForm() {
   return {
     text: '', next_scene_id: null, sort_order: 0, timer_seconds: 0,
-    point_cost: 0,
+    point_cost: 0, theme_id: null, is_auto_jump: false,
     text_en: '', text_ja: '', text_ko: '',
     conditions: []
   }
@@ -492,6 +558,8 @@ function openChoiceEditModal(id) {
         sort_order: found.sort_order || 0,
         timer_seconds: found.timer_seconds || 0,
         point_cost: found.point_cost || 0,
+        theme_id: found.theme_id || null,
+        is_auto_jump: !!found.is_auto_jump,
         text_en: tI18n.en || '',
         text_ja: tI18n.ja || '',
         text_ko: tI18n.ko || '',
@@ -524,7 +592,9 @@ async function saveChoice() {
     next_scene_id: choiceForm.value.next_scene_id ? parseInt(choiceForm.value.next_scene_id) : null,
     sort_order: parseInt(choiceForm.value.sort_order) || 0,
     timer_seconds: parseInt(choiceForm.value.timer_seconds) || 0,
-    point_cost: parseInt(choiceForm.value.point_cost) || 0
+    point_cost: parseInt(choiceForm.value.point_cost) || 0,
+    theme_id: choiceForm.value.theme_id ? parseInt(choiceForm.value.theme_id) : null,
+    is_auto_jump: choiceForm.value.is_auto_jump ? 1 : 0
   }
 
   const tI18n = {}
@@ -599,3 +669,29 @@ async function loadGames() {
 
 onMounted(() => { loadScenes(); loadGames(); })
 </script>
+
+<style scoped>
+/* 选项主题预览（与 GamePlayer.vue 的选项框主题样式保持一致，CSS 变量驱动） */
+.choice-btn {
+  background: var(--choice-bg, rgba(0, 0, 0, 0.55));
+  border-color: var(--choice-border, rgba(255, 255, 255, 0.15));
+  color: var(--choice-text, #ffffff);
+  border-radius: var(--choice-radius, 8px);
+  border-style: solid;
+  border-width: 1px;
+}
+.choice-btn:hover {
+  background: var(--choice-hover-bg, rgba(139, 92, 246, 0.4));
+  border-color: var(--choice-hover-border, #8b5cf6);
+}
+.choice-number {
+  color: var(--choice-number, #9ca3af);
+}
+.choice-cost {
+  background: var(--choice-cost-bg, rgba(251, 191, 36, 0.15));
+  color: var(--choice-cost-text, #fbbf24);
+  border-color: var(--choice-cost-border, rgba(251, 191, 36, 0.3));
+  border-style: solid;
+  border-width: 1px;
+}
+</style>

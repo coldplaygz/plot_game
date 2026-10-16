@@ -20,7 +20,8 @@ router.get('/', authenticate, authorize('admin', 'editor'), async (req, res) => 
       SELECT s.*, v.title AS video_title, v.file_path, v.duration,
              e.title AS ending_title,
              g.title AS game_title,
-             (SELECT COUNT(*) FROM choices c WHERE c.scene_id = s.id) AS choice_count
+             (SELECT COUNT(*) FROM choices c WHERE c.scene_id = s.id) AS choice_count,
+             (SELECT COUNT(*) FROM choices c WHERE c.scene_id = s.id AND c.is_auto_jump = 1) AS auto_jump_count
       FROM scenes s
       LEFT JOIN videos v ON s.video_id = v.id
       LEFT JOIN endings e ON s.ending_id = e.id
