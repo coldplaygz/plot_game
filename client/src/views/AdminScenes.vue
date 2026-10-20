@@ -43,6 +43,7 @@
           <td class="px-[14px] py-[10px] text-left border-b border-[#1e1e3a]">
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-brand-purple text-white hover:bg-brand-purple-dark" @click="openSceneModal(s.id)">编辑</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#059669] text-white hover:bg-[#047857] ml-1" @click="openChoicesModal(s.id)">选项({{ s.choice_count || 0 }})</button>
+            <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#2563eb] text-white hover:bg-[#1d4ed8] ml-1" @click="openDialoguesModal(s.id)">💬 对白</button>
             <button class="inline-flex items-center gap-[3px] px-3 py-[5px] border-none rounded-lg text-xs cursor-pointer transition-all duration-200 bg-[#dc2626] text-white hover:bg-[#b91c1c] ml-1" @click="deleteScene(s.id)">删除</button>
           </td>
         </tr>
@@ -267,6 +268,88 @@
         <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-brand-purple text-white hover:bg-brand-purple-dark" @click="saveChoice">保存</button>
       </template>
     </AppModal>
+
+    <!-- Dialogues Modal (树状) -->
+    <AppModal
+      :visible="dialoguesModalVisible"
+      :title="'对白管理 - 场景#' + dialoguesSceneId"
+      :wide="true"
+      @close="dialoguesModalVisible = false"
+    >
+      <div class="mb-3 text-text-dim text-[13px]">
+        场景: {{ dialoguesSceneTitle }}
+        <span class="text-text-dimmer ml-2">💬 对白(点击逐条推进) · ❓ 提问(弹出选项1/选项2…，点选后走该选项下的后续对白，层级不限)</span>
+      </div>
+      <div v-if="!dialogueTree.length" class="text-center py-6 text-text-dimmest text-sm">暂无对白</div>
+      <div v-else class="space-y-2 mb-4 max-h-[55vh] overflow-y-auto pr-1">
+        <div v-for="node in dialogueTree" :key="node.id"
+          class="border border-border-dim rounded-lg p-2.5 bg-surface-darkest">
+          <DialogueNode :node="node" :depth="0"
+            @edit="openDialogueEditModal"
+            @add="(pid, type) => openDialogueEditModal(0, pid, type)"
+            @del="deleteDialogueItem"
+          />
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-brand-purple text-white hover:bg-brand-purple-dark" @click="openDialogueEditModal(0, null, 'line')">+ 添加对白</button>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-amber-600 text-white hover:bg-amber-700" @click="openDialogueEditModal(0, null, 'option')">+ 添加提问</button>
+      </div>
+    </AppModal>
+
+    <!-- Dialogue Edit Modal -->
+    <AppModal
+      :visible="dialogueEditVisible"
+      :title="editingDialogueId > 0 ? '编辑对白' : (dialogueForm.parent_id ? '添加子节点' : (dialogueForm.node_type === 'option' ? '添加对白选项' : '添加对白'))"
+      :wide="true"
+      @close="dialogueEditVisible = false"
+    >
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">节点类型</label>
+        <div class="flex gap-4">
+          <label class="inline-flex items-center gap-2 cursor-pointer">
+            <input v-model="dialogueForm.node_type" type="radio" value="line" class="w-auto accent-brand-purple" />
+            <span class="text-[13px] text-white">💬 对白</span>
+          </label>
+          <label class="inline-flex items-center gap-2 cursor-pointer">
+            <input v-model="dialogueForm.node_type" type="radio" value="option" class="w-auto accent-brand-purple" />
+            <span class="text-[13px] text-white">❓ 提问（弹出子选项）</span>
+          </label>
+        </div>
+        <p class="text-[11px] text-text-dimmer mt-1">提问：其子节点作为候选项按钮弹出，玩家点选后播放该选项下的后续对白；后续对白里可继续加对白或再嵌套提问，层级不限</p>
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">说话人 <span class="text-text-dimmer">(可空)</span></label>
+        <input v-model="dialogueForm.speaker" placeholder="如: 林小雨" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">{{ dialogueForm.node_type === 'option' ? '提问文本 *（玩家看到的问句）' : '对白文本 *' }}</label>
+        <textarea v-model="dialogueForm.text" rows="2" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple resize-y"></textarea>
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">🌐 多语言文本</label>
+        <div class="grid grid-cols-3 gap-2">
+          <textarea v-model="dialogueForm.text_en" placeholder="English" rows="2" class="px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple resize-y"></textarea>
+          <textarea v-model="dialogueForm.text_ja" placeholder="日本語" rows="2" class="px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple resize-y"></textarea>
+          <textarea v-model="dialogueForm.text_ko" placeholder="한국어" rows="2" class="px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple resize-y"></textarea>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3 mb-[14px]">
+        <div>
+          <label class="block text-xs text-text-dim mb-1">触发时间(秒) <span class="text-text-dimmer">(仅根节点有效)</span></label>
+          <input v-model.number="dialogueForm.show_time" type="number" min="0" placeholder="视频第几秒出现" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
+        </div>
+        <div>
+          <label class="block text-xs text-text-dim mb-1">排序 <span class="text-text-dimmer">(同组内显示顺序)</span></label>
+          <input v-model.number="dialogueForm.sort_order" type="number" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
+        </div>
+      </div>
+
+      <template #actions>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-transparent border border-border-dim text-text-muted hover:text-white hover:border-brand-purple" @click="dialogueEditVisible = false">取消</button>
+        <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-brand-purple text-white hover:bg-brand-purple-dark" @click="saveDialogue">保存</button>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -276,6 +359,7 @@ import { useApi } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 import AppPagination from '../components/AppPagination.vue'
 import AppModal from '../components/AppModal.vue'
+import DialogueNode from '../components/DialogueNode.vue'
 
 const { get, post, put, del } = useApi()
 const { show } = useToast()
@@ -660,6 +744,133 @@ async function loadScenes() {
     scenes.value = r.scenes || []
   } catch (e) {
     show('加载场景失败: ' + e.message)
+  }
+}
+
+// ========= Dialogues Modal (树状对白) =========
+const dialoguesModalVisible = ref(false)
+const dialoguesSceneId = ref(0)
+const dialoguesSceneTitle = ref('')
+const dialogues = ref([])  // 平铺原始数据
+
+// 树状视图：真正的任意深度递归树（children 嵌套 children，由 DialogueNode 递归渲染）
+const dialogueTree = computed(() => {
+  const childrenOf = new Map()
+  for (const d of dialogues.value) {
+    const key = d.parent_id || 0
+    if (!childrenOf.has(key)) childrenOf.set(key, [])
+    childrenOf.get(key).push(d)
+  }
+  const build = (parentId, depth) =>
+    (childrenOf.get(parentId) || []).map(d => ({
+      ...d,
+      depth,
+      _isChoiceItem: depth > 0 && isChildOfOption(parentId),
+      children: build(d.id, depth + 1)
+    }))
+  return build(0, 0)
+})
+
+// 判断父节点是否为 option 类型（子节点显示为"选项"样式）
+function isChildOfOption(parentId) {
+  const p = dialogues.value.find(d => d.id === parentId)
+  return p ? p.node_type === 'option' : false
+}
+
+async function openDialoguesModal(sceneId) {
+  dialoguesSceneId.value = sceneId
+  try {
+    const [sr, dr] = await Promise.all([
+      get('/scenes/' + sceneId),
+      get('/dialogues/scene/' + sceneId)
+    ])
+    dialoguesSceneTitle.value = sr.scene?.title || ''
+    dialogues.value = dr.dialogues || []
+  } catch (e) {
+    show('加载对白失败')
+    return
+  }
+  dialoguesModalVisible.value = true
+}
+
+const dialogueEditVisible = ref(false)
+const editingDialogueId = ref(0)
+const dialogueForm = ref(getEmptyDialogueForm())
+
+function getEmptyDialogueForm() {
+  return {
+    parent_id: null, node_type: 'line', speaker: '', text: '',
+    text_en: '', text_ja: '', text_ko: '',
+    show_time: 0, duration: 0, sort_order: 0
+  }
+}
+
+function openDialogueEditModal(id, parentId = null, nodeType = 'line') {
+  editingDialogueId.value = id
+  if (id > 0) {
+    const found = dialogues.value.find(d => d.id === id)
+    if (found) {
+      let tI18n = {}
+      try { tI18n = JSON.parse(found.text_i18n || '{}') } catch {}
+      dialogueForm.value = {
+        parent_id: found.parent_id || null,
+        node_type: found.node_type || 'line',
+        speaker: found.speaker || '',
+        text: found.text || '',
+        text_en: tI18n.en || '', text_ja: tI18n.ja || '', text_ko: tI18n.ko || '',
+        show_time: found.show_time ?? 0,
+        duration: found.duration || 0,
+        sort_order: found.sort_order || 0
+      }
+    }
+  } else {
+    dialogueForm.value = getEmptyDialogueForm()
+    dialogueForm.value.parent_id = parentId
+    dialogueForm.value.node_type = nodeType
+  }
+  dialogueEditVisible.value = true
+}
+
+async function saveDialogue() {
+  if (!dialogueForm.value.text) return show('请输入文本')
+  const data = {
+    scene_id: dialoguesSceneId.value,
+    parent_id: dialogueForm.value.parent_id || null,
+    node_type: dialogueForm.value.node_type,
+    speaker: dialogueForm.value.speaker || null,
+    text: dialogueForm.value.text,
+    show_time: parseInt(dialogueForm.value.show_time) || 0,
+    sort_order: parseInt(dialogueForm.value.sort_order) || 0
+  }
+  const tI18n = {}
+  if (dialogueForm.value.text_en) tI18n.en = dialogueForm.value.text_en
+  if (dialogueForm.value.text_ja) tI18n.ja = dialogueForm.value.text_ja
+  if (dialogueForm.value.text_ko) tI18n.ko = dialogueForm.value.text_ko
+  if (Object.keys(tI18n).length > 0) data.text_i18n = JSON.stringify(tI18n)
+  else data.text_i18n = null
+
+  try {
+    if (editingDialogueId.value > 0) {
+      await put('/dialogues/' + editingDialogueId.value, data)
+    } else {
+      await post('/dialogues', data)
+    }
+    show('保存成功')
+    dialogueEditVisible.value = false
+    openDialoguesModal(dialoguesSceneId.value)
+  } catch (e) {
+    show('保存失败: ' + e.message)
+  }
+}
+
+async function deleteDialogueItem(id) {
+  if (!confirm('删除该对白及其所有子对白?')) return
+  try {
+    await del('/dialogues/' + id)
+    show('已删除')
+    openDialoguesModal(dialoguesSceneId.value)
+  } catch (e) {
+    show('删除失败')
   }
 }
 

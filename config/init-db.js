@@ -175,6 +175,27 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
+    // ============ 8. 场景对白表 (树状: parent_id 父节点, choice_id 分支条件) ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS dialogues (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        scene_id INT NOT NULL,
+        parent_id INT DEFAULT NULL COMMENT '父节点(NULL=根)',
+        choice_id INT DEFAULT NULL COMMENT '兼容字段(废弃)',
+        node_type ENUM('line','option') NOT NULL DEFAULT 'line' COMMENT 'line=普通对白 option=对白选项(弹出子项供选择)',
+        speaker VARCHAR(100) DEFAULT NULL COMMENT '说话人',
+        text VARCHAR(1000) NOT NULL COMMENT '对白文本',
+        text_i18n TEXT DEFAULT NULL COMMENT '多语言 JSON',
+        show_time INT DEFAULT 0 COMMENT '在场景视频第几秒出现',
+        duration INT DEFAULT 4 COMMENT '显示时长(秒)',
+        sort_order INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE,
+        FOREIGN KEY (choice_id) REFERENCES choices(id) ON DELETE CASCADE,
+        FOREIGN KEY (parent_id) REFERENCES dialogues(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+
     // ============ 8. 好感度规则表 (选择 -> 角色好感变化) ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS affection_rules (

@@ -70,6 +70,30 @@
       </div>
     </div>
 
+    <!-- ═══ 对白层（line=点击逐条推进；option=弹出候选项点选；显示期间暂停视频） ═══ -->
+    <div v-if="activeDialogueNode" class="absolute inset-0 z-30 flex items-end justify-center pb-[8rem] sm:pb-[9rem]"
+      @click.stop="advanceDialogue">
+      <!-- 普通对白 -->
+      <div v-if="activeDialogueNode.node_type !== 'option'"
+        class="w-[92%] max-w-2xl dlg-bubble bg-black/80 border border-white/15 rounded-xl px-4 py-3 backdrop-blur-sm shadow-xl">
+        <span v-if="activeDialogueNode.speaker"
+          class="block text-xs sm:text-sm text-brand-purple mb-1">{{ activeDialogueNode.speaker }}</span>
+        <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap">{{ activeDialogueNode?.text }}</span>
+        <div class="mt-1.5 text-right text-[10px] text-white/40">点击继续 ▸</div>
+      </div>
+      <!-- 对白选项（提问）：子节点作为候选项按钮 -->
+      <div v-else class="w-[92%] max-w-2xl dlg-bubble bg-black/80 border border-white/15 rounded-xl px-4 py-3 backdrop-blur-sm shadow-xl">
+        <span v-if="activeDialogueNode.speaker"
+          class="block text-xs sm:text-sm text-brand-purple mb-1">{{ activeDialogueNode.speaker }}</span>
+        <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap mb-2">{{ activeDialogueNode.text }}</span>
+        <div class="flex flex-col gap-1.5">
+          <button v-for="opt in activeDialogueOptions" :key="opt.id"
+            class="text-left px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-brand-purple/30 hover:border-brand-purple transition-colors text-sm text-white"
+            @click.stop="pickDialogueOption(opt.id)">{{ opt.text }}</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══ 底部容器 ═══ -->
     <div v-show="!choicesActive" class="relative z-20 shrink-0">
       <!-- 字幕显示区（在进度条上方） -->
@@ -420,6 +444,83 @@ let subExplicitlyOff = false  // 用户主动关闭字幕，跨场景不重新�
 const currentChoices = ref([])
 const choicesActive = ref(false)
 
+// ═══ 场景对白（树游走状态机：line=点击显示下一节点，option=弹出子项供玩家点选，显示期间暂停视频） ═══
+// 当前显示中的节点 id（null=无对白显示；可以是树上任意节点，不限于根）
+const dialogueActiveId = ref(null)
+// option 节点被玩家选中的子节点 id（决定后续分支）
+const dialogueChosenId = ref(null)
+// 本场景已显示过的节点 id（防重复触发/重复显示）
+const shownDialogueIds = new Set()
+
+const sceneDialogues = computed(() => game.currentScene?.dialogues || [])
+
+// 当前显示的对白节点（树上任意位置）
+const activeDialogueNode = computed(() =>
+  dialogueActiveId.value ? sceneDialogues.value.find(d => d.id === dialogueActiveId.value) || null : null
+)
+
+// 某节点的直接子节点（按 sort_order, id 排序，与后端返回顺序一致）
+function nodeChildren(id) {
+  return sceneDialogues.value.filter(d => d.parent_id === id)
+}
+
+// 当前 option 节点的候选项 = 其全部子节点
+const activeDialogueOptions = computed(() => {
+  const node = activeDialogueNode.value
+  if (!node || node.node_type !== 'option') return []
+  return nodeChildren(node.id)
+})
+
+// 检测触发（onTimeUpdate 调用）：视频播到根对白 show_time → 暂停视频开始对白
+function checkDialogueTrigger() {
+  if (dialogueActiveId.value || choicesActive.value) return
+  const now = videoCurrentTime.value
+  const next = sceneDialogues.value.find(
+    d => !d.parent_id && !shownDialogueIds.has(d.id) && now >= d.show_time
+  )
+  if (!next) return
+  startDialogue(next)
+}
+
+function startDialogue(node) {
+  shownDialogueIds.add(node.id)
+  dialogueChosenId.value = null
+  dialogueActiveId.value = node.id
+  videoEl.value?.pause()  // 对白显示期间暂停视频
+}
+
+// 点击对白推进：沿树游走 —— 当前节点走完看子节点：
+// 子节点是 line → 继续显示；是 option → 弹出提问；无子节点 → 关闭并恢复视频
+function advanceDialogue() {
+  const node = activeDialogueNode.value
+  if (!node || node.node_type === 'option') return  // option 节点必须点选项推进
+  const children = nodeChildren(node.id)
+  const next = children.find(c => !shownDialogueIds.has(c.id))
+  if (next) {
+    startDialogue(next)
+    return
+  }
+  // 无未显示的子节点：关闭对白，恢复视频
+  dialogueActiveId.value = null
+  videoEl.value?.play().catch(() => {})
+}
+
+// 玩家点了某个对白选项：进入该选项分支 —— 选项节点的子节点继续逐条显示
+// 分支里遇到提问节点会再弹出提问，层级不限
+function pickDialogueOption(childId) {
+  const node = activeDialogueNode.value
+  if (!node) return
+  dialogueChosenId.value = childId
+  dialogueActiveId.value = null
+  const next = nodeChildren(childId).find(c => !shownDialogueIds.has(c.id))
+  if (next) {
+    startDialogue(next)
+  } else {
+    // 该选项下没有后续内容：关闭并恢复视频
+    videoEl.value?.play().catch(() => {})
+  }
+}
+
 // ═══ 过场动画（无选项场景自动流转） ═══
 const transitionActive = ref(false)    // 过场层显示（Transition 淡入淡出）
 const transitionChapter = ref('')      // 下一场景章节名
@@ -651,6 +752,7 @@ function onWaiting() { isBuffering.value = true }
 function onPlaying() { isBuffering.value = false }
 function onTimeUpdate() {
   videoCurrentTime.value = videoEl.value?.currentTime || 0
+  checkDialogueTrigger()
   checkChoicePopup()
 }
 function onDurationChange() {
@@ -689,6 +791,7 @@ function onEnded() {
 function togglePlay() {
   const v = videoEl.value
   if (!v) return
+  if (dialogueActiveId.value || choicesActive.value) return  // 对白/选项期间不允许手动播放
   if (v.paused) v.play()
   else v.pause()
 }
@@ -820,6 +923,9 @@ async function playScene() {
 
   currentChoices.value = []
   choicesActive.value = false
+  dialogueActiveId.value = null
+  dialogueChosenId.value = null
+  shownDialogueIds.clear()
   isBuffering.value = true
   videoCurrentTime.value = 0
   videoDuration.value = 0
@@ -1083,6 +1189,17 @@ video::cue {
 @keyframes trans-line-grow {
   from { transform: scaleX(0); opacity: 0; }
   to { transform: scaleX(1); opacity: 1; }
+}
+
+/* ═══ 对白气泡过渡 ═══ */
+.dlg-enter-active,
+.dlg-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.dlg-enter-from,
+.dlg-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 /* ═══ 选项框主题样式（由 game.themeConfig 注入 CSS 变量驱动） ═══

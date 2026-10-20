@@ -89,6 +89,7 @@ router.get('/start', async (req, res) => {
     const lang = req.query.lang || '';
     const scene = rows[0];
     scene.choices = await getSceneChoices(scene.id, {}, lang, req.user.id);
+    scene.dialogues = await getSceneDialogues(scene.id, lang);
 
     // 翻译场景标题
     const sceneTitleI18n = t(scene.title_i18n, lang);
@@ -160,6 +161,7 @@ async function loadSceneData(sceneId, userId, lang = '', affections = {}) {
 
   const scene = rows[0];
   scene.choices = await getSceneChoices(sceneId, currentAffections, lang, userId);
+  scene.dialogues = await getSceneDialogues(sceneId, lang);
 
   // 翻译场景标题
   const sceneTitleI18n = t(scene.title_i18n, lang);
@@ -377,6 +379,31 @@ router.post('/choose', async (req, res) => {
     res.status(500).json({ error: '服务器内部错误' });
   }
 });
+
+/**
+ * 获取场景对白（含 i18n 翻译）
+ * 树状数据平铺返回，前端按 parent_id 组装；choice_id 分支由播放器根据玩家选择过滤
+ */
+async function getSceneDialogues(sceneId, lang = '') {
+  const [rows] = await pool.query(
+    'SELECT id, parent_id, node_type, speaker, text, text_i18n, show_time, duration, sort_order FROM dialogues WHERE scene_id = ? ORDER BY sort_order ASC, id ASC',
+    [sceneId]
+  );
+  return rows.map(d => {
+    let text = d.text;
+    const i18nText = t(d.text_i18n, lang);
+    if (i18nText) text = i18nText;
+    return {
+      id: d.id,
+      parent_id: d.parent_id,
+      node_type: d.node_type || 'line',
+      speaker: d.speaker || '',
+      text,
+      show_time: d.show_time || 0,
+      duration: d.duration || 4
+    };
+  });
+}
 
 /**
  * 获取场景的选择项（含条件过滤 + 已付费标记）
