@@ -40,6 +40,7 @@ const navItems = [
   { path: '/admin/themes', icon: '🎨', label: '选项主题' },
   { path: '/admin/videos', icon: '🎬', label: '视频管理' },
   { path: '/admin/scenes', icon: '📝', label: '场景编辑' },
+  { path: '/admin/dialogue-library', icon: '💬', label: '对白管理' },
   { path: '/admin/props', icon: '🎁', label: '道具管理' },
   { path: '/admin/users', icon: '👥', label: '用户管理' },
   { path: '/admin/recharge', icon: '💰', label: '充值管理' },

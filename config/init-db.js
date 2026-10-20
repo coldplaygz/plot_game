@@ -196,6 +196,24 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
+    // ============ 8b. 对白库表 (按游戏预编辑的模板对白树, 场景可整棵导入) ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS dialogue_library (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        game_id INT NOT NULL,
+        parent_id INT DEFAULT NULL COMMENT '父节点(NULL=根)',
+        node_type ENUM('line','option') NOT NULL DEFAULT 'line' COMMENT 'line=对白 option=提问',
+        speaker VARCHAR(100) DEFAULT NULL,
+        text VARCHAR(1000) NOT NULL,
+        text_i18n TEXT DEFAULT NULL,
+        show_time INT DEFAULT 0 COMMENT '建议触发时间(秒),导入场景时填入',
+        sort_order INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE,
+        FOREIGN KEY (parent_id) REFERENCES dialogue_library(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+
     // ============ 8. 好感度规则表 (选择 -> 角色好感变化) ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS affection_rules (

@@ -22,6 +22,7 @@ const routes = [
       { path: '', name: 'dashboard', component: () => import('../views/AdminDashboard.vue') },
       { path: 'videos', name: 'videos', component: () => import('../views/AdminVideos.vue') },
       { path: 'scenes', name: 'scenes', component: () => import('../views/AdminScenes.vue') },
+      { path: 'dialogue-library', name: 'dialogue-library', component: () => import('../views/AdminDialogueLibrary.vue') },
       { path: 'props', name: 'admin-props', component: () => import('../views/AdminProps.vue') },
       { path: 'games', name: 'admin-games', component: () => import('../views/AdminGames.vue') },
       { path: 'themes', name: 'admin-themes', component: () => import('../views/AdminThemes.vue') },

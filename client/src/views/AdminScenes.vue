@@ -291,7 +291,7 @@
           />
         </div>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap">
         <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-brand-purple text-white hover:bg-brand-purple-dark" @click="openDialogueEditModal(0, null, 'line')">+ 添加对白</button>
         <button class="inline-flex items-center gap-[5px] px-[18px] py-[9px] border-none rounded-lg text-[13px] cursor-pointer transition-all duration-200 bg-amber-600 text-white hover:bg-amber-700" @click="openDialogueEditModal(0, null, 'option')">+ 添加提问</button>
       </div>
@@ -300,10 +300,25 @@
     <!-- Dialogue Edit Modal -->
     <AppModal
       :visible="dialogueEditVisible"
-      :title="editingDialogueId > 0 ? '编辑对白' : (dialogueForm.parent_id ? '添加子节点' : (dialogueForm.node_type === 'option' ? '添加对白选项' : '添加对白'))"
+      :title="editingDialogueId > 0 ? '编辑对白' : (dialogueForm.parent_id ? '添加子节点' : (dialogueForm.node_type === 'option' ? '添加提问' : '添加对白'))"
       :wide="true"
       @close="dialogueEditVisible = false"
     >
+      <!-- 从对白库选取（仅新建时显示） -->
+      <div v-if="editingDialogueId === 0 && libItems.length" class="mb-[14px] border border-border-dim rounded-lg p-3 bg-surface-darkest">
+        <label class="block text-xs text-text-dim mb-1.5">📚 从对白库选取 <span class="text-text-dimmer">(点选自动填充下方表单)</span></label>
+        <div class="flex flex-wrap gap-1.5 max-h-[130px] overflow-y-auto">
+          <button v-for="lib in filteredLibItems" :key="lib.id"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] cursor-pointer text-left border transition-all duration-200 max-w-full"
+            :class="lib.node_type === 'option'
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/25'
+              : 'bg-brand-purple/10 border-brand-purple/30 text-white hover:bg-brand-purple/25'"
+            @click="applyLibItem(lib)">
+            <span class="shrink-0">{{ lib.node_type === 'option' ? '❓' : '💬' }}</span>
+            <span class="truncate max-w-[280px]">{{ lib.speaker ? lib.speaker + '：' : '' }}{{ lib.text }}</span>
+          </button>
+        </div>
+      </div>
       <div class="mb-[14px]">
         <label class="block text-xs text-text-dim mb-1">节点类型</label>
         <div class="flex gap-4">
@@ -786,11 +801,13 @@ async function openDialoguesModal(sceneId) {
     ])
     dialoguesSceneTitle.value = sr.scene?.title || ''
     dialogues.value = dr.dialogues || []
+    sceneGameIdCache = sr.scene?.game_id || null   // 对白库快选用
   } catch (e) {
     show('加载对白失败')
     return
   }
   dialoguesModalVisible.value = true
+  preloadLibrary()
 }
 
 const dialogueEditVisible = ref(false)
@@ -871,6 +888,46 @@ async function deleteDialogueItem(id) {
     openDialoguesModal(dialoguesSceneId.value)
   } catch (e) {
     show('删除失败')
+  }
+}
+
+// ========= 对白库快选（平铺素材池） =========
+const libItems = ref([])          // 场景所属游戏的库条目
+let sceneGameIdCache = null       // 打开对白弹窗时缓存场景的 game_id
+
+// 库快选条目：按当前表单节点类型过滤（对白↔提问 对应），按类型匹配后始终都提供参考
+const filteredLibItems = computed(() => {
+  const wantType = dialogueForm.value.node_type === 'option' ? 'option' : 'line'
+  const matched = libItems.value.filter(d => d.node_type === wantType)
+  // 类型匹配的排前面，其他类型放后面灰显参考（仍可点，会切换类型）
+  const others = libItems.value.filter(d => d.node_type !== wantType)
+  return [...matched, ...others]
+})
+
+// 弹窗打开时按场景 game_id 预载库（失败静默，不影响手工填写）
+async function preloadLibrary() {
+  libItems.value = []
+  try {
+    if (!sceneGameIdCache) return
+    const r = await get('/dialogue-library/game/' + sceneGameIdCache)
+    libItems.value = r.dialogues || []
+  } catch (e) {}
+}
+
+// 点选库素材 → 填充表单（含多语言/说话人；根节点带建议触发时间）
+function applyLibItem(lib) {
+  if (editingDialogueId.value > 0) return
+  let tI18n = {}
+  try { tI18n = JSON.parse(lib.text_i18n || '{}') } catch {}
+  dialogueForm.value.node_type = lib.node_type
+  dialogueForm.value.speaker = lib.speaker || ''
+  dialogueForm.value.text = lib.text
+  dialogueForm.value.text_en = tI18n.en || ''
+  dialogueForm.value.text_ja = tI18n.ja || ''
+  dialogueForm.value.text_ko = tI18n.ko || ''
+  // 仅根节点用建议触发时间
+  if (!dialogueForm.value.parent_id && lib.show_time) {
+    dialogueForm.value.show_time = lib.show_time
   }
 }
 

@@ -18,6 +18,7 @@ const pointsRoutes = require('./routes/points');
 const propRoutes = require('./routes/props');
 const themeRoutes = require('./routes/themes');
 const dialogueRoutes = require('./routes/dialogues');
+const dialogueLibraryRoutes = require('./routes/dialogue-library');
 
 const { uploadHeaders, spaHeaders } = require('./config/static');
 const { hlsAuthMiddleware } = require('./middleware/hlsAuth');
@@ -150,6 +151,7 @@ app.use('/api/points', pointsRoutes);  // 积分
 app.use('/api/props', propRoutes);     // 道具
 app.use('/api/themes', themeRoutes);   // 选项主题
 app.use('/api/dialogues', dialogueRoutes); // 场景对白
+app.use('/api/dialogue-library', dialogueLibraryRoutes); // 对白库
 
 // 404
 app.use((req, res) => res.status(404).json({ error: '接口不存在' }));
