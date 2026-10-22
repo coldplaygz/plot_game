@@ -71,6 +71,7 @@
               <td class="px-4 py-3">
                 <div class="flex gap-1.5">
                   <button @click="openEdit(u)" class="px-2.5 py-1 bg-brand-purple/20 text-brand-purple text-xs rounded hover:bg-brand-purple/30 transition-colors">编辑</button>
+                  <button @click="openAttrs(u)" class="px-2.5 py-1 bg-cyan-500/20 text-cyan-400 text-xs rounded hover:bg-cyan-500/30 transition-colors">属性</button>
                   <button
                     @click="toggleUser(u)"
                     :class="u.is_active ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'"
@@ -144,6 +145,38 @@
         <div v-if="editError" class="text-red-400 text-xs mt-2">{{ editError }}</div>
       </div>
     </div>
+
+    <!-- 用户游戏属性查看弹窗 -->
+    <div v-if="attrUser" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" @click.self="attrUser = null">
+      <div class="bg-surface-card border border-border-dim rounded-2xl p-6 w-[560px] max-h-[85vh] overflow-y-auto">
+        <h3 class="text-lg text-white mb-1">用户属性 - {{ attrUser.username }}</h3>
+        <p class="text-xs text-text-dimmer mb-4">显示用户在各游戏自动存档中记录的属性值快照（过场景时保存）</p>
+
+        <div v-if="attrLoading" class="text-center py-8 text-text-dimmer text-sm">加载中...</div>
+        <div v-else-if="!attrGames.length" class="text-center py-8 text-text-dimmer text-sm">该用户暂无任何游戏进度</div>
+        <div v-else class="space-y-3">
+          <div v-for="g in attrGames" :key="g.game_id"
+            class="border border-border-dim rounded-xl p-3.5 bg-black/20">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-white text-[14px] font-medium">{{ g.game_title || ('游戏#' + g.game_id) }}</span>
+              <span class="text-text-dimmest text-[10px]">场景: {{ g.scene_title || g.scene_id }} · 更新于 {{ formatDate(g.updated_at) }}</span>
+            </div>
+            <div v-if="!g.attrs.length" class="text-text-dimmest text-[11px]">该游戏未定义属性或尚未记录</div>
+            <div v-else class="flex flex-wrap gap-2">
+              <div v-for="a in g.attrs" :key="a.attr_id"
+                class="flex items-center gap-1.5 bg-black/40 border border-border-dim rounded-full px-3 py-1">
+                <span class="text-[11px] text-text-dim">{{ a.name }}</span>
+                <span class="text-[13px] font-bold text-white tabular-nums">{{ a.value }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex mt-5">
+          <button @click="attrUser = null" class="w-full py-2 bg-white/5 text-text-dim rounded-lg text-sm hover:bg-white/10 transition-colors">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -163,6 +196,25 @@ const pagination = ref({ page: 1, limit: 20, total: 0, totalPages: 0 })
 // Edit modal
 const editUser = ref(null)
 const editError = ref('')
+
+// 用户游戏属性查看
+const attrUser = ref(null)
+const attrLoading = ref(false)
+const attrGames = ref([])
+
+async function openAttrs(u) {
+  attrUser.value = u
+  attrLoading.value = true
+  attrGames.value = []
+  try {
+    const r = await get('/saves/user-attributes/' + u.id)
+    attrGames.value = r.games || []
+  } catch (e) {
+    attrGames.value = []
+  } finally {
+    attrLoading.value = false
+  }
+}
 
 function roleLabel(role) {
   const map = { admin: '管理员', editor: '编辑', player: '玩家' }

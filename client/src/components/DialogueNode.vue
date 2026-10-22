@@ -33,6 +33,7 @@
           <button class="d-btn bg-[#0891b2] hover:bg-[#0e7490]" @click="$emit('add', node.id, 'line')">+ 后续对白</button>
           <button class="d-btn bg-amber-600 hover:bg-amber-700" @click="$emit('add', node.id, 'option')">+ 提问</button>
         </template>
+        <!-- 选项节点的属性影响在编辑弹窗里配置（📈 已合并进编辑） -->
         <button class="d-btn bg-[#dc2626] hover:bg-[#b91c1c]" @click="$emit('del', node.id)">删除</button>
       </div>
     </div>

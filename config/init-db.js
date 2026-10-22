@@ -49,6 +49,7 @@ async function initDatabase() {
     await conn.query(`
       CREATE TABLE IF NOT EXISTS characters (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        game_id INT NOT NULL COMMENT '归属游戏',
         name VARCHAR(100) NOT NULL,
         avatar VARCHAR(500) DEFAULT NULL,
         avatar_pic VARCHAR(500) DEFAULT NULL COMMENT '角色立绘/展示图',
@@ -59,9 +60,13 @@ async function initDatabase() {
         is_hidden TINYINT(1) DEFAULT 0 COMMENT '隐藏角色',
         voice_actor VARCHAR(100) DEFAULT NULL,
         birthday VARCHAR(50) DEFAULT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
       ) ENGINE=InnoDB
     `);
+
+    // 旧库迁移：characters 补 game_id（关联游戏, 级联删除）+ dialogues/dialogue_library 补 character_id
+    await migrateCharacterColumns(conn, dbName);
 
     // ============ 3. 结局表 ============
     await conn.query(`
@@ -214,6 +219,34 @@ async function initDatabase() {
       ) ENGINE=InnoDB
     `);
 
+    // ============ 8c. 游戏属性表 (每游戏自定义属性: 好感度/暴力值/信任值..., 对白选项可影响) ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS game_attributes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        game_id INT NOT NULL,
+        attr_key VARCHAR(50) NOT NULL COMMENT '属性键(英文/拼音, 程序用)',
+        name VARCHAR(100) NOT NULL COMMENT '显示名(如: 好感度)',
+        default_value INT NOT NULL DEFAULT 0 COMMENT '初始值',
+        sort_order INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_game_key (game_id, attr_key),
+        FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+
+    // ============ 8d. 对白选项属性影响表 (选项 → 属性 +-N) ============
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS dialogue_option_effects (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        dialogue_id INT NOT NULL COMMENT '对白选项条目(dialogues 表里选项节点)',
+        attr_id INT NOT NULL COMMENT 'game_attributes.id',
+        delta INT NOT NULL DEFAULT 0 COMMENT '影响值 +-N',
+        FOREIGN KEY (dialogue_id) REFERENCES dialogues(id) ON DELETE CASCADE,
+        FOREIGN KEY (attr_id) REFERENCES game_attributes(id) ON DELETE CASCADE,
+        UNIQUE KEY uq_dialogue_attr (dialogue_id, attr_id)
+      ) ENGINE=InnoDB
+    `);
+
     // ============ 8. 好感度规则表 (选择 -> 角色好感变化) ============
     await conn.query(`
       CREATE TABLE IF NOT EXISTS affection_rules (
@@ -276,6 +309,18 @@ async function initDatabase() {
         console.log('[InitDB] 已为 saves 表补充 history_json 字段');
       }
     } catch (e) { console.warn('[InitDB] saves.history_json 迁移失败 (可能已存在):', e.message); }
+
+    // 旧库迁移：saves 表补充 attributes_json 字段（游戏属性值快照）
+    try {
+      const [aCol] = await conn.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='saves' AND COLUMN_NAME='attributes_json'",
+        [dbName]
+      );
+      if (!aCol.length) {
+        await conn.query("ALTER TABLE saves ADD COLUMN attributes_json TEXT DEFAULT NULL COMMENT '游戏属性值快照 JSON {attr_id: value}'");
+        console.log('[InitDB] 已为 saves 表补充 attributes_json 字段');
+      }
+    } catch (e) { console.warn('[InitDB] saves.attributes_json 迁移失败 (可能已存在):', e.message); }
 
     // ============ 11. 存档好感度快照 ============
     await conn.query(`
@@ -623,7 +668,7 @@ async function initDatabase() {
       console.log('  └─ 密码:', adminPass);
     }
 
-    // 插入初始角色数据（示例）
+    // 插入初始角色数据（示例）— characters 有 game_id NOT NULL, 无归属游戏时跳过种子
     const [chars] = await conn.query('SELECT COUNT(*) AS cnt FROM characters');
     if (chars[0].cnt === 0) {
       const sampleCharacters = [
@@ -634,13 +679,23 @@ async function initDatabase() {
         ['周雅琪', '#ec4899', '知性优雅的咖啡店老板娘', '成熟/知性/温柔', 5],
         ['沈月', '#10b981', '古灵精怪的童年玩伴，乐团主唱', '活泼/叛逆/勇敢', 6]
       ];
-      for (const ch of sampleCharacters) {
-        await conn.query(
-          'INSERT INTO characters (name, color, description, personality, sort_order) VALUES (?, ?, ?, ?, ?)',
-          ch
-        );
+      // 角色按游戏归属；取第一个游戏作为种子归属（无游戏时不插）
+      let firstGameId = null;
+      try {
+        const [g0] = await conn.query('SELECT id FROM games ORDER BY id LIMIT 1');
+        firstGameId = g0.length ? g0[0].id : null;
+      } catch (e) { firstGameId = null; }
+      if (firstGameId) {
+        for (const ch of sampleCharacters) {
+          await conn.query(
+            'INSERT INTO characters (game_id, name, color, description, personality, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+            [firstGameId, ...ch]
+          );
+        }
+        console.log('[InitDB] 初始角色数据已插入 (6位, 归属游戏#' + firstGameId + ')');
+      } else {
+        console.log('[InitDB] 跳过初始角色种子（尚无游戏）');
       }
-      console.log('[InitDB] 初始角色数据已插入 (6位女主角)');
     }
 
     // ============ 预设选项主题 ============
@@ -676,3 +731,87 @@ async function initDatabase() {
 }
 
 module.exports = initDatabase;
+
+/**
+ * 角色系统列迁移（幂等：先查 INFORMATION_SCHEMA 再 ALTER）
+ * 1. characters 补 game_id（有旧种子数据时先清掉——旧角色无游戏归属, 属废弃示例数据）
+ * 2. dialogues / dialogue_library 补 character_id（对白关联角色→头像）
+ * 3. dialogue_library 删 parent_id（对白库是平铺素材池, 无树结构）
+ */
+async function migrateCharacterColumns(conn, dbName) {
+  // --- characters.game_id ---
+  try {
+    const [cols] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='characters' AND COLUMN_NAME='game_id'",
+      [dbName]);
+    if (cols.length === 0) {
+      // 先看有没有旧数据（旧示例角色无 game_id）
+      const [cnt] = await conn.query('SELECT COUNT(*) c FROM characters');
+      if (cnt[0].c > 0) {
+        await conn.query('DELETE FROM characters');
+        console.log('[InitDB] characters 含无归属旧数据, 已清空（旧示例角色）');
+      }
+      await conn.query('ALTER TABLE characters ADD COLUMN game_id INT NOT NULL COMMENT \'归属游戏\' AFTER id');
+      // games 表存在才加外键
+      const [gt] = await conn.query(
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND TABLE_NAME='games'", [dbName]);
+      if (gt.length) {
+        await conn.query('ALTER TABLE characters ADD FOREIGN KEY (game_id) REFERENCES games(id) ON DELETE CASCADE');
+      }
+      console.log('[InitDB] 已为 characters 表添加 game_id 字段(含外键)');
+    }
+  } catch (e) { console.warn('[InitDB] characters.game_id 迁移失败:', e.message); }
+
+  // --- dialogues.character_id ---
+  try {
+    const [cols] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogues' AND COLUMN_NAME='character_id'",
+      [dbName]);
+    if (cols.length === 0) {
+      await conn.query("ALTER TABLE dialogues ADD COLUMN character_id INT DEFAULT NULL COMMENT '关联角色(头像显示)' AFTER speaker");
+      console.log('[InitDB] 已为 dialogues 表添加 character_id 字段');
+    }
+  } catch (e) { console.warn('[InitDB] dialogues.character_id 迁移失败:', e.message); }
+
+  // --- dialogue_library.character_id ---
+  try {
+    const [cols] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogue_library' AND COLUMN_NAME='character_id'",
+      [dbName]);
+    if (cols.length === 0) {
+      await conn.query("ALTER TABLE dialogue_library ADD COLUMN character_id INT DEFAULT NULL COMMENT '关联角色' AFTER speaker");
+      console.log('[InitDB] 已为 dialogue_library 表添加 character_id 字段');
+    }
+  } catch (e) { console.warn('[InitDB] dialogue_library.character_id 迁移失败:', e.message); }
+
+  // --- dialogues 门槛列（选项属性限制: 达到 min_value 才可选） ---
+  try {
+    const [cols] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogues' AND COLUMN_NAME='min_attr_id'",
+      [dbName]);
+    if (cols.length === 0) {
+      await conn.query("ALTER TABLE dialogues ADD COLUMN min_attr_id INT DEFAULT NULL COMMENT '门槛属性(game_attributes.id, 达到min_value才能选)' AFTER character_id");
+      await conn.query("ALTER TABLE dialogues ADD COLUMN min_value INT DEFAULT 0 COMMENT '门槛值(当前属性值>=min_value 才可选)' AFTER min_attr_id");
+      console.log('[InitDB] 已为 dialogues 表添加 min_attr_id/min_value 门槛字段');
+    }
+  } catch (e) { console.warn('[InitDB] dialogues 门槛字段迁移失败:', e.message); }
+
+  // --- dialogue_library 删 parent_id（平铺化） ---
+  try {
+    const [cols] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogue_library' AND COLUMN_NAME='parent_id'",
+      [dbName]);
+    if (cols.length > 0) {
+      // 找到 parent_id 的外键名并删除
+      const [fks] = await conn.query(
+        "SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogue_library' AND COLUMN_NAME='parent_id' AND REFERENCED_TABLE_NAME IS NOT NULL",
+        [dbName]);
+      for (const fk of fks) {
+        await conn.query('ALTER TABLE dialogue_library DROP FOREIGN KEY `' + fk.CONSTRAINT_NAME + '`');
+      }
+      await conn.query('ALTER TABLE dialogue_library DROP COLUMN parent_id');
+      console.log('[InitDB] dialogue_library 已移除 parent_id（平铺素材池化）');
+    }
+  } catch (e) { console.warn('[InitDB] dialogue_library.parent_id 迁移失败:', e.message); }
+}
+

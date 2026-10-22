@@ -334,7 +334,14 @@
         <p class="text-[11px] text-text-dimmer mt-1">提问：其子节点作为候选项按钮弹出，玩家点选后播放该选项下的后续对白；后续对白里可继续加对白或再嵌套提问，层级不限</p>
       </div>
       <div class="mb-[14px]">
-        <label class="block text-xs text-text-dim mb-1">说话人 <span class="text-text-dimmer">(可空)</span></label>
+        <label class="block text-xs text-text-dim mb-1">角色 <span class="text-text-dimmer">(决定对白头像, 说话人自动带出)</span></label>
+        <select v-model="dialogueForm.character_id" class="picker w-full" @change="onDialogueCharChange">
+          <option :value="null">不关联角色</option>
+          <option v-for="ch in sceneCharacters" :key="ch.id" :value="ch.id">{{ ch.name }}</option>
+        </select>
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1">说话人 <span class="text-text-dimmer">(选角色自动填充, 可手写改)</span></label>
         <input v-model="dialogueForm.speaker" placeholder="如: 林小雨" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
       </div>
       <div class="mb-[14px]">
@@ -357,6 +364,48 @@
         <div>
           <label class="block text-xs text-text-dim mb-1">排序 <span class="text-text-dimmer">(同组内显示顺序)</span></label>
           <input v-model.number="dialogueForm.sort_order" type="number" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
+        </div>
+      </div>
+
+      <!-- 属性影响（仅选项节点：已保存的选项行内联编辑, 新建选项保存后再配） -->
+      <div v-if="isChoiceNode" class="mb-[14px] border border-fuchsia-500/25 bg-fuchsia-500/5 rounded-lg p-3">
+        <label class="block text-xs text-text-dim mb-1.5">📈 属性影响 <span class="text-text-dimmer">(玩家选中该选项时增减, 属性在 游戏属性 菜单定义)</span></label>
+        <div v-if="!sceneAttributes.length" class="text-[11px] text-text-dimmest">
+          该游戏还没有定义属性，请先到 后台 → 游戏属性 添加
+        </div>
+        <template v-else>
+          <div class="space-y-2 mb-2">
+            <div v-for="(row, i) in effectRows" :key="i" class="flex items-center gap-2">
+              <select v-model="row.attr_id" class="picker flex-1">
+                <option :value="null">— 选择属性 —</option>
+                <option v-for="a in sceneAttributes" :key="a.id" :value="a.id">{{ a.name }} ({{ a.attr_key }})</option>
+              </select>
+              <input v-model.number="row.delta" type="number" placeholder="±N" class="picker w-24 text-center" />
+              <span class="text-text-dimmer text-[11px] w-14 text-center">初始+{{ row.delta || 0 }}</span>
+              <button class="d-btn-x" @click="effectRows.splice(i, 1)">✕</button>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button class="btn-sm-cyan" @click="effectRows.push({ attr_id: null, delta: 1 })">+ 添加影响</button>
+            <span v-if="editingDialogueId === 0" class="text-[10px] text-text-dimmer">新建选项先保存, 再重新打开配置影响</span>
+          </div>
+        </template>
+      </div>
+
+      <!-- 属性门槛（仅选项节点): 玩家属性达到设定值才能选此项 -->
+      <div v-if="isChoiceNode" class="mb-[14px] border border-amber-500/25 bg-amber-500/5 rounded-lg p-3">
+        <label class="block text-xs text-text-dim mb-1.5">🔒 属性门槛 <span class="text-text-dimmer">(玩家属性达到设定值才能选此项, 不设置=无限制)</span></label>
+        <div v-if="!sceneAttributes.length" class="text-[11px] text-text-dimmest">
+          该游戏还没有定义属性
+        </div>
+        <div v-else class="flex items-center gap-2">
+          <select v-model="dialogueForm.min_attr_id" class="picker flex-1">
+            <option :value="null">无门槛</option>
+            <option v-for="a in sceneAttributes" :key="a.id" :value="a.id">需 {{ a.name }} 达到…</option>
+          </select>
+          <input v-if="dialogueForm.min_attr_id" v-model.number="dialogueForm.min_value" type="number" min="0"
+            placeholder="≥N" class="picker w-24 text-center" />
+          <span v-if="dialogueForm.min_attr_id" class="text-text-dimmer text-[11px]">及以上可选</span>
         </div>
       </div>
 
@@ -781,15 +830,77 @@ const dialogueTree = computed(() => {
       ...d,
       depth,
       _isChoiceItem: depth > 0 && isChildOfOption(parentId),
+      _parentIsOption: isChildOfOption(parentId),
+      attr_effect_count: effectCounts.value[d.id] || 0,
       children: build(d.id, depth + 1)
     }))
   return build(0, 0)
 })
 
+// 选项节点的属性影响数（dialogue_id → count）
+const effectCounts = ref({})
+
+async function loadEffectCounts() {
+  effectCounts.value = {}
+  if (!dialoguesSceneId.value) return
+  try {
+    const r = await get('/game-attributes/scene-effects-count/' + dialoguesSceneId.value)
+    if (r && r.counts) effectCounts.value = r.counts
+  } catch (e) {}
+}
+
 // 判断父节点是否为 option 类型（子节点显示为"选项"样式）
 function isChildOfOption(parentId) {
   const p = dialogues.value.find(d => d.id === parentId)
   return p ? p.node_type === 'option' : false
+}
+
+// ========= 属性影响（合并进对白编辑弹窗: 选项节点编辑时内联配置） =========
+const sceneAttributes = ref([])         // 该游戏的属性定义
+const effectRows = ref([])              // 当前编辑选项的影响 [{attr_id, delta}]
+
+// 当前编辑的节点是不是"选项"（挂在提问下的 line 节点）——只有选项能配属性影响
+const isChoiceNode = computed(() =>
+  dialogueForm.value.node_type === 'line' && !!dialogueForm.value.parent_id
+)
+
+function attrPreviewValue(row) {
+  const a = sceneAttributes.value.find(x => x.id === row.attr_id)
+  return a ? (a.default_value + (parseInt(row.delta) || 0)) : '-'
+}
+
+async function loadSceneAttributes() {
+  sceneAttributes.value = []
+  if (!sceneGameIdCache) return
+  try {
+    const r = await get('/game-attributes/game/' + sceneGameIdCache)
+    sceneAttributes.value = r.attributes || []
+  } catch (e) {}
+}
+
+// 打开编辑弹窗时（已有节点）拉取已有影响
+async function loadEffectRows(dialogueId) {
+  effectRows.value = []
+  if (!dialogueId) return
+  try {
+    const r = await get('/game-attributes/effects/' + dialogueId)
+    effectRows.value = (r.effects || []).map(e => ({ attr_id: e.attr_id, delta: e.delta }))
+  } catch (e) {}
+}
+
+async function saveEffects() {
+  const effects = effectRows.value
+    .filter(r => r.attr_id)
+    .map(r => ({ attr_id: r.attr_id, delta: parseInt(r.delta) || 0 }))
+  const ids = effects.map(e => e.attr_id)
+  if (new Set(ids).size !== ids.length) { show('同一属性只能有一条影响'); return false }
+  try {
+    await put('/game-attributes/effects/' + editingDialogueId.value, { effects })
+    return true
+  } catch (e) {
+    show('属性影响保存失败: ' + e.message)
+    return false
+  }
 }
 
 async function openDialoguesModal(sceneId) {
@@ -808,6 +919,8 @@ async function openDialoguesModal(sceneId) {
   }
   dialoguesModalVisible.value = true
   preloadLibrary()
+  loadEffectCounts()
+  loadSceneAttributes()
 }
 
 const dialogueEditVisible = ref(false)
@@ -816,14 +929,16 @@ const dialogueForm = ref(getEmptyDialogueForm())
 
 function getEmptyDialogueForm() {
   return {
-    parent_id: null, node_type: 'line', speaker: '', text: '',
+    parent_id: null, node_type: 'line', character_id: null, speaker: '', text: '',
     text_en: '', text_ja: '', text_ko: '',
-    show_time: 0, duration: 0, sort_order: 0
+    show_time: 0, duration: 0, sort_order: 0,
+    min_attr_id: null, min_value: 0
   }
 }
 
 function openDialogueEditModal(id, parentId = null, nodeType = 'line') {
   editingDialogueId.value = id
+  effectRows.value = []
   if (id > 0) {
     const found = dialogues.value.find(d => d.id === id)
     if (found) {
@@ -832,13 +947,18 @@ function openDialogueEditModal(id, parentId = null, nodeType = 'line') {
       dialogueForm.value = {
         parent_id: found.parent_id || null,
         node_type: found.node_type || 'line',
+        character_id: found.character_id || null,
         speaker: found.speaker || '',
         text: found.text || '',
         text_en: tI18n.en || '', text_ja: tI18n.ja || '', text_ko: tI18n.ko || '',
         show_time: found.show_time ?? 0,
         duration: found.duration || 0,
-        sort_order: found.sort_order || 0
+        sort_order: found.sort_order || 0,
+        min_attr_id: found.min_attr_id || null,
+        min_value: found.min_value || 0
       }
+      // 选项节点 → 顺带拉取已有属性影响（内联展示在编辑弹窗里）
+      if (isChoiceNode.value) loadEffectRows(id)
     }
   } else {
     dialogueForm.value = getEmptyDialogueForm()
@@ -854,10 +974,13 @@ async function saveDialogue() {
     scene_id: dialoguesSceneId.value,
     parent_id: dialogueForm.value.parent_id || null,
     node_type: dialogueForm.value.node_type,
+    character_id: dialogueForm.value.character_id || null,
     speaker: dialogueForm.value.speaker || null,
     text: dialogueForm.value.text,
     show_time: parseInt(dialogueForm.value.show_time) || 0,
-    sort_order: parseInt(dialogueForm.value.sort_order) || 0
+    sort_order: parseInt(dialogueForm.value.sort_order) || 0,
+    min_attr_id: dialogueForm.value.min_attr_id || null,
+    min_value: dialogueForm.value.min_attr_id ? (parseInt(dialogueForm.value.min_value) || 0) : 0
   }
   const tI18n = {}
   if (dialogueForm.value.text_en) tI18n.en = dialogueForm.value.text_en
@@ -867,10 +990,20 @@ async function saveDialogue() {
   else data.text_i18n = null
 
   try {
-    if (editingDialogueId.value > 0) {
-      await put('/dialogues/' + editingDialogueId.value, data)
+    let savedId = editingDialogueId.value
+    if (savedId > 0) {
+      await put('/dialogues/' + savedId, data)
     } else {
-      await post('/dialogues', data)
+      const r = await post('/dialogues', data)
+      // 新建节点：后端返回 dialogue.id，后续就能直接保存属性影响
+      savedId = r?.dialogue?.id || 0
+      if (savedId) editingDialogueId.value = savedId
+    }
+    // 选项节点：对白保存成功后一并保存属性影响
+    // （新建场景：POST /dialogues 已返回新 id，可直接挂影响；仅当无 id 时才需重开）
+    if (isChoiceNode.value && savedId > 0 && sceneAttributes.value.length && effectRows.value.some(r => r.attr_id)) {
+      const ok = await saveEffects()
+      if (!ok) show('对白已保存，但属性影响未保存——请重新打开该选项检查')
     }
     show('保存成功')
     dialogueEditVisible.value = false
@@ -894,6 +1027,7 @@ async function deleteDialogueItem(id) {
 // ========= 对白库快选（平铺素材池） =========
 const libItems = ref([])          // 场景所属游戏的库条目
 let sceneGameIdCache = null       // 打开对白弹窗时缓存场景的 game_id
+const sceneCharacters = ref([])   // 场景所属游戏的角色列表（编辑弹窗下拉用）
 
 // 库快选条目：按当前表单节点类型过滤（对白↔提问 对应），按类型匹配后始终都提供参考
 const filteredLibItems = computed(() => {
@@ -904,14 +1038,27 @@ const filteredLibItems = computed(() => {
   return [...matched, ...others]
 })
 
-// 弹窗打开时按场景 game_id 预载库（失败静默，不影响手工填写）
+// 弹窗打开时按场景 game_id 预载库 + 角色（失败静默，不影响手工填写）
 async function preloadLibrary() {
   libItems.value = []
+  sceneCharacters.value = []
   try {
     if (!sceneGameIdCache) return
-    const r = await get('/dialogue-library/game/' + sceneGameIdCache)
-    libItems.value = r.dialogues || []
+    const [lr, cr] = await Promise.all([
+      get('/dialogue-library/game/' + sceneGameIdCache),
+      get('/characters/game/' + sceneGameIdCache)
+    ])
+    libItems.value = lr.dialogues || []
+    sceneCharacters.value = cr.characters || []
   } catch (e) {}
+}
+
+// 对白编辑表单：选角色 → 说话人自动填角色名
+function onDialogueCharChange() {
+  if (dialogueForm.value.character_id) {
+    const ch = sceneCharacters.value.find(c => c.id === dialogueForm.value.character_id)
+    if (ch) dialogueForm.value.speaker = ch.name
+  }
 }
 
 // 点选库素材 → 填充表单（含多语言/说话人；根节点带建议触发时间）
@@ -920,6 +1067,7 @@ function applyLibItem(lib) {
   let tI18n = {}
   try { tI18n = JSON.parse(lib.text_i18n || '{}') } catch {}
   dialogueForm.value.node_type = lib.node_type
+  dialogueForm.value.character_id = lib.character_id || null
   dialogueForm.value.speaker = lib.speaker || ''
   dialogueForm.value.text = lib.text
   dialogueForm.value.text_en = tI18n.en || ''
@@ -939,6 +1087,7 @@ onMounted(() => { loadScenes(); loadGames(); })
 </script>
 
 <style scoped>
+@reference "../style.css";
 /* 选项主题预览（与 GamePlayer.vue 的选项框主题样式保持一致，CSS 变量驱动） */
 .choice-btn {
   background: var(--choice-bg, rgba(0, 0, 0, 0.55));
@@ -961,5 +1110,11 @@ onMounted(() => { loadScenes(); loadGames(); })
   border-color: var(--choice-cost-border, rgba(251, 191, 36, 0.3));
   border-style: solid;
   border-width: 1px;
+}
+.d-btn-x {
+  @apply inline-flex items-center justify-center w-7 h-7 border-none rounded-md text-[12px] cursor-pointer bg-white/5 text-text-dim hover:bg-red-600 hover:text-white transition-all duration-200;
+}
+.btn-sm-cyan {
+  @apply inline-flex items-center gap-[4px] px-3 py-1.5 border-none rounded-md text-[12px] cursor-pointer bg-cyan-600 text-white hover:bg-cyan-700 transition-all duration-200;
 }
 </style>

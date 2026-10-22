@@ -19,6 +19,8 @@ const propRoutes = require('./routes/props');
 const themeRoutes = require('./routes/themes');
 const dialogueRoutes = require('./routes/dialogues');
 const dialogueLibraryRoutes = require('./routes/dialogue-library');
+const characterRoutes = require('./routes/characters');
+const gameAttributeRoutes = require('./routes/game-attributes');
 
 const { uploadHeaders, spaHeaders } = require('./config/static');
 const { hlsAuthMiddleware } = require('./middleware/hlsAuth');
@@ -102,6 +104,11 @@ app.use('/uploads/covers', express.static('uploads/covers', {
   maxAge: '7d',
   setHeaders: uploadHeaders
 }));
+// 角色头像：公开（播放器对白气泡显示需要）
+app.use('/uploads/avatars', express.static('uploads/avatars', {
+  maxAge: '7d',
+  setHeaders: uploadHeaders
+}));
 // 视频/HLS/音轨/字幕：需 HLS 鉴权（Cookie 或 URL Token）
 app.use('/uploads', hlsAuthMiddleware, express.static('uploads', {
   maxAge: '365d',
@@ -152,6 +159,8 @@ app.use('/api/props', propRoutes);     // 道具
 app.use('/api/themes', themeRoutes);   // 选项主题
 app.use('/api/dialogues', dialogueRoutes); // 场景对白
 app.use('/api/dialogue-library', dialogueLibraryRoutes); // 对白库
+app.use('/api/characters', characterRoutes); // 角色(每游戏, 对白头像)
+app.use('/api/game-attributes', gameAttributeRoutes); // 游戏属性 + 对白选项影响
 
 // 404
 app.use((req, res) => res.status(404).json({ error: '接口不存在' }));

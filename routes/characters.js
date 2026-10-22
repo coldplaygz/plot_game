@@ -1,0 +1,134 @@
+/**
+ * 角色管理 API（每游戏独立的对白角色：命名 + 头像）
+ * 头像存 uploads/avatars（公开静态，播放器对白气泡直接 <img> 显示）
+ */
+const express = require('express');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const pool = require('../config/db');
+const { authenticate, authorize } = require('../middleware/auth');
+
+const router = express.Router();
+
+// ============ Multer 配置 (头像上传) ============
+const AVATARS_DIR = process.env.AVATARS_UPLOAD_DIR || 'uploads/avatars';
+if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
+
+const avatarStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, AVATARS_DIR),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, 'avatar-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const avatarUpload = multer({
+  storage: avatarStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowedExt = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    const allowedMime = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowedExt.includes(ext) && allowedMime.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('头像仅支持 JPG/PNG/GIF/WebP'));
+  }
+});
+
+// latin1 → utf8 文件名修复（multer 中文文件名乱码）
+function fixFilename(name) {
+  try { return Buffer.from(name, 'latin1').toString('utf8'); } catch { return name; }
+}
+
+// 某游戏的全部角色（含对白引用计数）
+router.get('/game/:gameId', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ch.id, ch.game_id, ch.name, ch.avatar, ch.color, ch.sort_order, ch.created_at,
+              (SELECT COUNT(*) FROM dialogues d WHERE d.character_id = ch.id) AS dialogue_count
+       FROM characters ch
+       WHERE ch.game_id = ? ORDER BY ch.sort_order ASC, ch.id ASC`,
+      [req.params.gameId]
+    );
+    res.json({ characters: rows });
+  } catch (err) {
+    console.error('[Characters] 获取失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 创建角色（可带头像 multipart: avatar）
+router.post('/', authenticate, authorize('admin', 'editor'), avatarUpload.single('avatar'), async (req, res) => {
+  try {
+    const { game_id, name, color, sort_order } = req.body;
+    if (!game_id || !name) return res.status(400).json({ error: '游戏ID和角色名不能为空' });
+
+    const [g] = await pool.query('SELECT id FROM games WHERE id = ?', [game_id]);
+    if (g.length === 0) return res.status(400).json({ error: '游戏不存在' });
+
+    const avatar = req.file ? (req.file.destination + '/' + req.file.filename).replace(/\\/g, '/') : null;
+    const [result] = await pool.query(
+      'INSERT INTO characters (game_id, name, avatar, color, sort_order) VALUES (?, ?, ?, ?, ?)',
+      [game_id, name.trim(), avatar, color || '#e91e63', parseInt(sort_order) || 0]
+    );
+    res.status(201).json({ message: '角色创建成功', character: { id: result.insertId, avatar } });
+  } catch (err) {
+    console.error('[Characters] 创建失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 更新角色（可替换头像）
+router.put('/:id', authenticate, authorize('admin', 'editor'), avatarUpload.single('avatar'), async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT id, game_id, avatar FROM characters WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: '角色不存在' });
+    const old = rows[0];
+
+    const fields = []; const values = [];
+    const { name, color, sort_order } = req.body;
+    if (name !== undefined && name.trim()) { fields.push('name = ?'); values.push(name.trim()); }
+    if (color !== undefined) { fields.push('color = ?'); values.push(color || '#e91e63'); }
+    if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(sort_order) || 0); }
+    if (req.file) {
+      fields.push('avatar = ?');
+      values.push((req.file.destination + '/' + req.file.filename).replace(/\\/g, '/'));
+      // 删除旧头像文件
+      if (old.avatar && fs.existsSync(old.avatar)) { try { fs.unlinkSync(old.avatar); } catch {} }
+    }
+    if (fields.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
+
+    values.push(req.params.id);
+    await pool.query(`UPDATE characters SET ${fields.join(', ')} WHERE id = ?`, values);
+    res.json({ message: '更新成功' });
+  } catch (err) {
+    console.error('[Characters] 更新失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 删除角色（对白仍保留 speaker 文本, character_id 由引用处置空）
+router.delete('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    // 先看头像
+    const [rows] = await conn.query('SELECT avatar FROM characters WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) { await conn.rollback(); conn.release(); return res.status(404).json({ error: '角色不存在' }); }
+    // 引用处置空（不级联删对白）
+    await conn.query('UPDATE dialogues SET character_id = NULL WHERE character_id = ?', [req.params.id]);
+    await conn.query('UPDATE dialogue_library SET character_id = NULL WHERE character_id = ?', [req.params.id]);
+    await conn.query('DELETE FROM characters WHERE id = ?', [req.params.id]);
+    await conn.commit();
+    conn.release();
+    if (rows[0].avatar && fs.existsSync(rows[0].avatar)) { try { fs.unlinkSync(rows[0].avatar); } catch {} }
+    res.json({ message: '已删除（相关对白保留, 角色关联已解除）' });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    conn.release();
+    console.error('[Characters] 删除失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+module.exports = router;

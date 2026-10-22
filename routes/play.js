@@ -100,11 +100,29 @@ router.get('/start', async (req, res) => {
       scene.choice_delay = Math.floor(scene.duration || 0);
     }
 
-    // 返回所有角色初始好感度（0）
+    // 返回所有角色初始好感度（0）+ 游戏属性定义及初始值
     const [characters] = await pool.query(
       'SELECT id, name, color, avatar FROM characters WHERE is_hidden = 0 ORDER BY sort_order'
     );
     scene.characters = characters.map(c => ({ ...c, affection: 0 }));
+
+    // 游戏自定义属性（好感度/暴力值...）：定义 + 初始值 + 全部选项影响（前端预加载, 选项时本地立即结算）
+    if (scene.game_id) {
+      const [attrs] = await pool.query(
+        'SELECT id, attr_key, name, default_value, sort_order FROM game_attributes WHERE game_id = ? ORDER BY sort_order, id',
+        [scene.game_id]);
+      scene.attributes = attrs.map(a => ({ ...a, value: a.default_value }));
+      const [effects] = await pool.query(
+        `SELECT e.dialogue_id, e.attr_id, e.delta
+         FROM dialogue_option_effects e
+         JOIN dialogues d ON e.dialogue_id = d.id
+         JOIN scenes s ON d.scene_id = s.id
+         WHERE s.game_id = ?`, [scene.game_id]);
+      scene.dialogue_effects = effects; // 全游戏选项影响表（dialogue_id → [{attr_id, delta}]）✓ 量小
+    } else {
+      scene.attributes = [];
+      scene.dialogue_effects = [];
+    }
 
     // 音轨 & 字幕
     const [audios] = await pool.query('SELECT id, language, label, file_path, is_default, hls_playlist_path, hls_status FROM video_audios WHERE video_id = ? ORDER BY is_default DESC', [scene.video_id]);
@@ -188,6 +206,24 @@ async function loadSceneData(sceneId, userId, lang = '', affections = {}) {
     ...c,
     affection: currentAffections[c.id] || 0
   }));
+
+  // 游戏自定义属性定义 + 全部选项影响（属性"值"由前端会话维护, 这里只给定义; 向后兼容旧客户端）
+  if (scene.game_id) {
+    const [attrs] = await pool.query(
+      'SELECT id, attr_key, name, default_value, sort_order FROM game_attributes WHERE game_id = ? ORDER BY sort_order, id',
+      [scene.game_id]);
+    scene.attributes = attrs;
+    const [effects] = await pool.query(
+      `SELECT e.dialogue_id, e.attr_id, e.delta
+       FROM dialogue_option_effects e
+       JOIN dialogues d ON e.dialogue_id = d.id
+       JOIN scenes s ON d.scene_id = s.id
+       WHERE s.game_id = ?`, [scene.game_id]);
+    scene.dialogue_effects = effects;
+  } else {
+    scene.attributes = [];
+    scene.dialogue_effects = [];
+  }
 
   // 如果是结局场景
   if (scene.is_ending && scene.ending_id) {
@@ -291,6 +327,66 @@ router.post('/backtrack', async (req, res) => {
 });
 
 /**
+ * POST /api/play/dialogue-choice
+ * 对白选项结算：属性影响（服务端按影响表计算, 防篡改）
+ * Body: { dialogue_id(所选项), attributes: {attr_id: value, ...} }
+ * 返回: { changes: [{attr_id, attr_key, name, delta, old_value, new_value}], attributes: {...} }
+ */
+router.post('/dialogue-choice', async (req, res) => {
+  try {
+    const { dialogue_id, attributes } = req.body;
+    if (!dialogue_id) return res.status(400).json({ error: '请提供对白选项ID' });
+
+    // 选项及其游戏 + 门槛设定
+    const [dRows] = await pool.query(
+      'SELECT d.id, d.min_attr_id, d.min_value, s.game_id FROM dialogues d JOIN scenes s ON d.scene_id = s.id WHERE d.id = ?',
+      [dialogue_id]);
+    if (dRows.length === 0) return res.status(404).json({ error: '对白选项不存在' });
+    const gameId = dRows[0].game_id;
+    const gateAttrId = dRows[0].min_attr_id;
+    const gateValue = dRows[0].min_value || 0;
+
+    // 门槛校验（服务端权威防篡改）：传上来的属性值必须达到门槛
+    const current = { ...(attributes || {}) };
+    if (gateAttrId && gateValue > 0) {
+      const attrVal = parseInt(current[String(gateAttrId)]) || 0;
+      if (attrVal < gateValue) {
+        const [gateAttr] = await pool.query('SELECT name FROM game_attributes WHERE id = ?', [gateAttrId]);
+        return res.status(403).json({
+          error: 'gated',
+          message: `「${gateAttr[0]?.name || '属性'}」需达到 ${gateValue} 才能选择此项（当前 ${attrVal}）`,
+          attr_id: gateAttrId, required: gateValue, current: attrVal
+        });
+      }
+    }
+
+    // 该选项的影响 + 属性定义（服务端 authoritative 结算）
+    const [effects] = await pool.query(
+      `SELECT e.attr_id, e.delta, ga.attr_key, ga.name
+       FROM dialogue_option_effects e
+       JOIN game_attributes ga ON e.attr_id = ga.id
+       WHERE e.dialogue_id = ? AND ga.game_id = ?`,
+      [dialogue_id, gameId]);
+
+    const changes = [];
+    for (const e of effects) {
+      const key = String(e.attr_id);
+      const oldVal = parseInt(current[key]) || 0;
+      const newVal = Math.max(0, oldVal + (parseInt(e.delta) || 0));  // 属性值不小于 0
+      current[key] = newVal;
+      changes.push({
+        attr_id: e.attr_id, attr_key: e.attr_key, name: e.name,
+        delta: e.delta, old_value: oldVal, new_value: newVal
+      });
+    }
+    res.json({ changes, attributes: current });
+  } catch (err) {
+    console.error('[Play] 对白选项结算失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+/**
  * POST /api/play/choose
  * 玩家做出选择 - 返回好感度变化 + 下一场景
  * Body: { choice_id, scene_id, affections: {"1":10,...} }
@@ -386,18 +482,28 @@ router.post('/choose', async (req, res) => {
  */
 async function getSceneDialogues(sceneId, lang = '') {
   const [rows] = await pool.query(
-    'SELECT id, parent_id, node_type, speaker, text, text_i18n, show_time, duration, sort_order FROM dialogues WHERE scene_id = ? ORDER BY sort_order ASC, id ASC',
+    `SELECT d.id, d.parent_id, d.node_type, d.speaker, d.character_id, d.min_attr_id, d.min_value, d.text, d.text_i18n, d.show_time, d.duration, d.sort_order,
+            c.name AS character_name, c.avatar AS character_avatar, c.color AS character_color
+     FROM dialogues d
+     LEFT JOIN characters c ON d.character_id = c.id
+     WHERE d.scene_id = ? ORDER BY d.sort_order ASC, d.id ASC`,
     [sceneId]
   );
   return rows.map(d => {
     let text = d.text;
     const i18nText = t(d.text_i18n, lang);
     if (i18nText) text = i18nText;
+    const avatarPath = d.character_avatar || null;
     return {
       id: d.id,
       parent_id: d.parent_id,
       node_type: d.node_type || 'line',
       speaker: d.speaker || '',
+      character_id: d.character_id || null,
+      character_avatar: avatarPath ? '/' + avatarPath.replace(/^\//, '') : null,
+      character_color: d.character_color || null,
+      min_attr_id: d.min_attr_id || null,
+      min_value: d.min_value || 0,
       text,
       show_time: d.show_time || 0,
       duration: d.duration || 4

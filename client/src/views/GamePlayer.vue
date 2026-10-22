@@ -76,21 +76,86 @@
       <!-- 普通对白 -->
       <div v-if="activeDialogueNode.node_type !== 'option'"
         class="w-[92%] max-w-2xl dlg-bubble bg-black/80 border border-white/15 rounded-xl px-4 py-3 backdrop-blur-sm shadow-xl">
-        <span v-if="activeDialogueNode.speaker"
-          class="block text-xs sm:text-sm text-brand-purple mb-1">{{ activeDialogueNode.speaker }}</span>
-        <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap">{{ activeDialogueNode?.text }}</span>
+        <div class="flex items-start gap-2.5">
+          <!-- 角色头像 -->
+          <img v-if="activeCharAvatar"
+            :src="activeCharAvatar"
+            class="w-11 h-11 rounded-full object-cover border-2 shrink-0"
+            :style="{ borderColor: activeCharColor || '#8b5cf6' }" />
+          <div v-else-if="activeDialogueNode.speaker"
+            class="w-11 h-11 rounded-full flex items-center justify-center text-white text-base shrink-0"
+            :style="{ background: activeCharColor || '#8b5cf6' }">{{ activeDialogueNode.speaker.charAt(0) }}</div>
+          <div class="flex-1 min-w-0">
+            <span v-if="activeDialogueNode.speaker"
+              class="block text-xs sm:text-sm mb-1" :style="{ color: activeCharColor || '#a78bfa' }">{{ activeDialogueNode.speaker }}</span>
+            <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap">{{ activeDialogueNode?.text }}</span>
+          </div>
+        </div>
         <div class="mt-1.5 text-right text-[10px] text-white/40">点击继续 ▸</div>
       </div>
       <!-- 对白选项（提问）：子节点作为候选项按钮 -->
       <div v-else class="w-[92%] max-w-2xl dlg-bubble bg-black/80 border border-white/15 rounded-xl px-4 py-3 backdrop-blur-sm shadow-xl">
-        <span v-if="activeDialogueNode.speaker"
-          class="block text-xs sm:text-sm text-brand-purple mb-1">{{ activeDialogueNode.speaker }}</span>
-        <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap mb-2">{{ activeDialogueNode.text }}</span>
+        <div class="flex items-start gap-2.5 mb-2">
+          <img v-if="activeCharAvatar"
+            :src="activeCharAvatar"
+            class="w-11 h-11 rounded-full object-cover border-2 shrink-0"
+            :style="{ borderColor: activeCharColor || '#8b5cf6' }" />
+          <div v-else-if="activeDialogueNode.speaker"
+            class="w-11 h-11 rounded-full flex items-center justify-center text-white text-base shrink-0"
+            :style="{ background: activeCharColor || '#8b5cf6' }">{{ activeDialogueNode.speaker.charAt(0) }}</div>
+          <div class="flex-1 min-w-0">
+            <span v-if="activeDialogueNode.speaker"
+              class="block text-xs sm:text-sm mb-1" :style="{ color: activeCharColor || '#a78bfa' }">{{ activeDialogueNode.speaker }}</span>
+            <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap">{{ activeDialogueNode.text }}</span>
+          </div>
+        </div>
         <div class="flex flex-col gap-1.5">
           <button v-for="opt in activeDialogueOptions" :key="opt.id"
-            class="text-left px-3 py-2 rounded-lg bg-white/10 border border-white/15 hover:bg-brand-purple/30 hover:border-brand-purple transition-colors text-sm text-white"
-            @click.stop="pickDialogueOption(opt.id)">{{ opt.text }}</button>
+            class="text-left px-3 py-2 rounded-lg border transition-colors text-sm"
+            :class="optionGated(opt)
+              ? 'bg-white/5 border-white/10 text-white/40 cursor-not-allowed'
+              : 'bg-white/10 border-white/15 hover:bg-brand-purple/30 hover:border-brand-purple text-white'"
+            :disabled="optionGated(opt)"
+            @click.stop="optionGated(opt) ? null : pickDialogueOption(opt.id)">
+            <div class="flex items-center gap-2">
+              <span class="min-w-0 flex-1">{{ opt.text }}</span>
+              <!-- 属性门槛标记：未达标显示锁 -->
+              <span v-if="optionGated(opt)"
+                class="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border bg-amber-500/10 border-amber-400/30 text-amber-300">
+                🔒 {{ gateAttrName(opt.min_attr_id) }} 需 {{ opt.min_value }}（当前 {{ gateAttrValue(opt.min_attr_id) }}）
+              </span>
+              <!-- 属性影响标记 +N / -N -->
+              <span v-for="eff in dialogueOptionEffects(opt.id)" :key="eff.attr_id"
+                class="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border"
+                :class="eff.delta >= 0
+                  ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-300'
+                  : 'bg-red-500/15 border-red-400/30 text-red-300'">
+                {{ eff.attr_name }} {{ eff.delta >= 0 ? '+' : '' }}{{ eff.delta }}
+              </span>
+            </div>
+          </button>
         </div>
+      </div>
+    </div>
+
+    <!-- ═══ 属性面板（左上角, 有自定义属性时显示） ═══ -->
+    <div v-if="game.gameAttributes.length"
+      class="absolute top-16 left-3 z-20 flex flex-col gap-1.5 pointer-events-none">
+      <div v-for="attr in game.gameAttributes" :key="attr.id"
+        class="flex items-center gap-2 bg-black/60 backdrop-blur-sm border border-white/15 rounded-full pl-2.5 pr-3 py-1">
+        <span class="text-[11px] text-white/70">{{ attr.name }}</span>
+        <span class="text-[13px] font-bold text-white tabular-nums">{{ attr.value }}</span>
+      </div>
+    </div>
+
+    <!-- ═══ 属性变化飘字（选项结算反馈） ═══ -->
+    <div class="absolute top-16 left-3 z-30 pointer-events-none">
+      <div v-for="a in game.attrChangeAnims" :key="a.id"
+        class="attr-float flex items-center gap-1.5 bg-black/70 border border-white/20 rounded-full px-3 py-1 mb-1.5"
+        :class="a.delta >= 0 ? 'border-emerald-400/40' : 'border-red-400/40'">
+        <span class="text-[11px] text-white/80">{{ a.name }}</span>
+        <span class="text-[14px] font-bold tabular-nums"
+          :class="a.delta >= 0 ? 'text-emerald-400' : 'text-red-400'">{{ a.delta >= 0 ? '+' : '' }}{{ a.delta }}</span>
       </div>
     </div>
 
@@ -105,6 +170,38 @@
       <!-- 控制栏 -->
       <div class="px-3 sm:px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] bg-gradient-to-t from-black/85 via-black/60 to-transparent transition-opacity duration-300"
         :class="controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'">
+        <!-- 进度条：鼠标/手指移到附近才浮现（桌面 hover 触发 + 移动端控制栏出现即显示） -->
+        <div
+          class="group/bar relative h-6 flex items-center cursor-pointer select-none mb-0.5 transition-opacity duration-200"
+          :class="progressBarVisible ? 'opacity-100' : 'opacity-0'"
+          @mouseenter="progressHover = true"
+          @mouseleave="progressHover = false"
+          @touchstart.passive="progressHover = true"
+          @touchend.passive="touchLeaveProgress"
+          @click.stop
+        >
+          <!-- 轨道 -->
+          <div class="relative w-full h-[4px] group-hover/bar:h-[6px] transition-all duration-150 rounded-full bg-white/20 overflow-hidden"
+            @click.stop="onProgressClick">
+            <!-- 已播放 -->
+            <div class="absolute inset-y-0 left-0 bg-brand-purple rounded-full"
+              :style="{ width: progressPercent + '%' }"></div>
+            <!-- 缓冲 -->
+            <div v-if="bufferedPercent > progressPercent" class="absolute inset-y-0 left-0 bg-white/25 rounded-full"
+              :style="{ width: bufferedPercent + '%' }"></div>
+          </div>
+          <!-- 拖拽手柄（hover 加大） -->
+          <div class="absolute w-3.5 h-3.5 rounded-full bg-brand-purple shadow-lg pointer-events-none transition-transform duration-150"
+            :class="progressHover ? 'scale-125' : 'scale-100'"
+            :style="{ left: 'calc(' + progressPercent + '% - 7px)' }"></div>
+          <!-- 时间提示（拖拽/hover 时显示） -->
+          <div v-if="progressHover && videoDuration"
+            class="absolute -top-6 px-1.5 py-0.5 rounded bg-black/85 text-white text-[10px] tabular-nums pointer-events-none whitespace-nowrap"
+            :style="{ left: 'calc(' + progressPercent + '% - 24px)' }">
+            {{ formatTime(videoCurrentTime) }} / {{ formatTime(videoDuration) }}
+          </div>
+        </div>
+
         <!-- 按钮行 -->
         <div class="flex items-center gap-1.5 sm:gap-2">
           <!-- 播放/暂停 -->
@@ -351,11 +448,48 @@ const { isMobile, updateMobileDetection } = useMobileDetection()
 // 播放状态
 const isPlaying = ref(false)
 const isBuffering = ref(false)
-const videoCurrentTime = ref(0)  // 供 choice_delay 弹出检测用，无进度条 UI
-const videoDuration = ref(0)     // 供 skipScene 用，无进度条 UI
+const videoCurrentTime = ref(0)  // 供 choice_delay 弹出检测 + 进度条
+const videoDuration = ref(0)     // 供 skipScene 用 + 进度条
 const playbackRate = ref(1)
 const isLooping = ref(false)
 const subtitleText = ref('')
+
+// ═══ 进度条（鼠标移到附近才显示; 移动端控制栏出现即显示） ═══
+const progressHover = ref(false)
+// 桌面: 控制栏可见 && 悬停; 移动端: 控制栏可见即显示（触屏无 hover 概念）
+const progressBarVisible = computed(() => {
+  if (isMobile.value) return controlsVisible.value
+  return controlsVisible.value && progressHover.value
+})
+const progressPercent = computed(() => {
+  if (!videoDuration.value) return 0
+  return Math.min(100, Math.max(0, (videoCurrentTime.value / videoDuration.value) * 100))
+})
+const bufferedPercent = computed(() => {
+  const v = videoEl.value
+  if (!v || !v.buffered.length || !videoDuration.value) return 0
+  return Math.min(100, (v.buffered.end(v.buffered.length - 1) / videoDuration.value) * 100)
+})
+function touchLeaveProgress() {
+  setTimeout(() => { progressHover.value = false }, 1500)
+}
+function formatTime(sec) {
+  const s = Math.max(0, Math.floor(sec || 0))
+  const m = Math.floor(s / 60), ss = s % 60
+  return m + ':' + String(ss).padStart(2, '0')
+}
+// 点击轨道 seek（对白/选项期间禁止拖动——对白跟随视频时间轴触发，乱跳会错乱触发状态）
+function onProgressClick(e) {
+  if (dialogueActiveId.value || choicesActive.value) return
+  const v = videoEl.value
+  if (!v || !v.duration || !Number.isFinite(v.duration)) return
+  const rect = e.currentTarget.getBoundingClientRect()
+  const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+  v.currentTime = ratio * v.duration
+  videoCurrentTime.value = v.currentTime
+  // seek 后若处于暂停状态保持暂停；播放中则继续
+  revealControls()
+}
 
 // UI 菜单状态（存档/读档入口已移除：过场景自动保存 + 开场页继续游戏）
 const showMoreMenu = ref(false)
@@ -459,6 +593,15 @@ const activeDialogueNode = computed(() =>
   dialogueActiveId.value ? sceneDialogues.value.find(d => d.id === dialogueActiveId.value) || null : null
 )
 
+// 当前对白的角色头像/主题色（关联角色时显示头像, 未关联但有名则显示首字占位）
+// avatar 存的是 'uploads/avatars/x.png'（无斜杠）→ 必须转成 '/uploads/...' 绝对路径,
+// 否则浏览器把相对 src 按当前路由解析: /play/3 页面会拼成 /play/uploads/... 404
+const activeCharAvatar = computed(() => {
+  const a = activeDialogueNode.value?.character_avatar
+  return a ? '/' + String(a).replace(/^\//, '') : null
+})
+const activeCharColor = computed(() => activeDialogueNode.value?.character_color || null)
+
 // 某节点的直接子节点（按 sort_order, id 排序，与后端返回顺序一致）
 function nodeChildren(id) {
   return sceneDialogues.value.filter(d => d.parent_id === id)
@@ -470,6 +613,29 @@ const activeDialogueOptions = computed(() => {
   if (!node || node.node_type !== 'option') return []
   return nodeChildren(node.id)
 })
+
+// 选项按钮上的属性影响标记 [{attr_id, attr_name, delta}]
+function dialogueOptionEffects(optionId) {
+  const effects = game.dialogueEffectMap[optionId] || []
+  return effects.map(e => {
+    const attr = game.gameAttributes.find(a => a.id === e.attr_id)
+    return { attr_id: e.attr_id, attr_name: attr?.name || '?', delta: e.delta }
+  })
+}
+
+// ═══ 选项属性门槛：玩家属性达到 min_value 才可选 ═══
+function optionGated(opt) {
+  if (!opt.min_attr_id || !(opt.min_value > 0)) return false
+  const attr = game.gameAttributes.find(a => a.id === opt.min_attr_id)
+  if (!attr) return false
+  return attr.value < opt.min_value
+}
+function gateAttrName(attrId) {
+  return game.gameAttributes.find(a => a.id === attrId)?.name || '?'
+}
+function gateAttrValue(attrId) {
+  return game.gameAttributes.find(a => a.id === attrId)?.value ?? 0
+}
 
 // 检测触发（onTimeUpdate 调用）：视频播到根对白 show_time → 暂停视频开始对白
 function checkDialogueTrigger() {
@@ -506,12 +672,14 @@ function advanceDialogue() {
 }
 
 // 玩家点了某个对白选项：进入该选项分支 —— 选项节点的子节点继续逐条显示
-// 分支里遇到提问节点会再弹出提问，层级不限
-function pickDialogueOption(childId) {
+// 分支里遇到提问节点会再弹出提问，层级不限；同时结算该选项的属性影响
+async function pickDialogueOption(childId) {
   const node = activeDialogueNode.value
   if (!node) return
   dialogueChosenId.value = childId
   dialogueActiveId.value = null
+  // 属性影响结算（飘字 + 数值变化，服务端校验）
+  game.applyDialogueEffects(childId)
   const next = nodeChildren(childId).find(c => !shownDialogueIds.has(c.id))
   if (next) {
     startDialogue(next)
@@ -1155,6 +1323,17 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
+/* ═══ 属性变化飘字（选项结算反馈） ═══ */
+.attr-float {
+  animation: attr-float-up 2.2s ease forwards;
+}
+@keyframes attr-float-up {
+  0% { opacity: 0; transform: translateY(8px) scale(0.9); }
+  15% { opacity: 1; transform: translateY(0) scale(1); }
+  75% { opacity: 1; transform: translateY(-6px) scale(1); }
+  100% { opacity: 0; transform: translateY(-22px) scale(0.95); }
+}
+
 /* 隐藏 hls.js 原生渲染的字幕（我们通过 cuechange 监听自己渲染到 DOM） */
 video::cue {
   visibility: hidden;
