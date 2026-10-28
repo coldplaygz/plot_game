@@ -65,14 +65,13 @@ router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) 
       if (character_id) {
         const [c] = await pool.query('SELECT id, name FROM characters WHERE id = ? AND game_id = ?', [character_id, gameId]);
         if (c.length === 0) return res.status(400).json({ error: '角色不存在或不属于该游戏' });
-      }
-      fields.push('character_id = ?'); values.push(character_id || null);
-      // 选了角色且没有自定义说话人 → speaker 跟随角色名
-      if (character_id) {
-        const [c] = await pool.query('SELECT name FROM characters WHERE id = ?', [character_id]);
+        // 选了角色且没有自定义说话人 → speaker 跟随角色名
         fields.push('speaker = ?'); values.push(speaker_override || c[0].name);
-      } else if (speaker_override !== undefined) {
-        fields.push('speaker = ?'); values.push(speaker_override || null);
+      } else {
+        fields.push('character_id = ?'); values.push(null);
+        if (speaker_override !== undefined) {
+          fields.push('speaker = ?'); values.push(speaker_override || null);
+        }
       }
     } else if (speaker_override !== undefined) {
       fields.push('speaker = ?'); values.push(speaker_override || null);

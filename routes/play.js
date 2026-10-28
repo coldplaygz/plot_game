@@ -100,9 +100,10 @@ router.get('/start', async (req, res) => {
       scene.choice_delay = Math.floor(scene.duration || 0);
     }
 
-    // 返回所有角色初始好感度（0）+ 游戏属性定义及初始值
+    // 返回当前游戏的角色（好感度面板）——按 game_id 过滤, 避免混入其他游戏角色
     const [characters] = await pool.query(
-      'SELECT id, name, color, avatar FROM characters WHERE is_hidden = 0 ORDER BY sort_order'
+      'SELECT id, name, color, avatar FROM characters WHERE is_hidden = 0 AND game_id = ? ORDER BY sort_order',
+      [scene.game_id || 0]
     );
     scene.characters = characters.map(c => ({ ...c, affection: 0 }));
 
@@ -198,9 +199,10 @@ async function loadSceneData(sceneId, userId, lang = '', affections = {}) {
     scene.choice_delay = Math.floor(scene.duration || 0);
   }
 
-  // 角色好感度状态
+  // 角色好感度状态（按场景所属游戏过滤）
   const [characters] = await pool.query(
-    'SELECT id, name, color, avatar FROM characters WHERE is_hidden = 0 ORDER BY sort_order'
+    'SELECT id, name, color, avatar FROM characters WHERE is_hidden = 0 AND game_id = ? ORDER BY sort_order',
+    [scene.game_id || 0]
   );
   scene.characters = characters.map(c => ({
     ...c,
@@ -534,16 +536,38 @@ async function getSceneChoices(sceneId, affections, lang = '', userId = null) {
     paidRows.forEach(r => paidSet.add(r.ref_id));
   }
 
-  const validChoices = [];
-
-  for (const choice of allChoices) {
-    // 检查条件
-    const [conditions] = await pool.query(`
+  // 批量取本场景全部选项的条件与好感度规则（避免循环内 N+1）
+  const choiceIds = allChoices.map(c => c.id);
+  const conditionsByChoice = new Map();
+  const rulesByChoice = new Map();
+  if (choiceIds.length) {
+    const [condRows] = await pool.query(`
       SELECT cd.*, c.name AS character_name
       FROM conditions cd
       JOIN characters c ON cd.character_id = c.id
-      WHERE cd.target_type = 'choice' AND cd.target_id = ?
-    `, [choice.id]);
+      WHERE cd.target_type = 'choice' AND cd.target_id IN (?)
+    `, [choiceIds]);
+    for (const cd of condRows) {
+      if (!conditionsByChoice.has(cd.target_id)) conditionsByChoice.set(cd.target_id, []);
+      conditionsByChoice.get(cd.target_id).push(cd);
+    }
+    const [ruleRows] = await pool.query(`
+      SELECT ar.choice_id, ar.delta, c.name AS character_name
+      FROM affection_rules ar
+      JOIN characters c ON ar.character_id = c.id
+      WHERE ar.choice_id IN (?)
+    `, [choiceIds]);
+    for (const ar of ruleRows) {
+      if (!rulesByChoice.has(ar.choice_id)) rulesByChoice.set(ar.choice_id, []);
+      rulesByChoice.get(ar.choice_id).push(ar);
+    }
+  }
+
+  const validChoices = [];
+
+  for (const choice of allChoices) {
+    // 检查条件（内存中判断）
+    const conditions = conditionsByChoice.get(choice.id) || [];
 
     let isAvailable = true;
     for (const cond of conditions) {
@@ -566,12 +590,7 @@ async function getSceneChoices(sceneId, affections, lang = '', userId = null) {
       const textI18n = t(choice.text_i18n, lang);
       if (textI18n) text = textI18n;
 
-      const [rules] = await pool.query(`
-        SELECT ar.delta, c.name AS character_name
-        FROM affection_rules ar
-        JOIN characters c ON ar.character_id = c.id
-        WHERE ar.choice_id = ?
-      `, [choice.id]);
+      const rules = rulesByChoice.get(choice.id) || [];
 
       validChoices.push({
         id: choice.id,

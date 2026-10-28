@@ -62,16 +62,42 @@ router.get('/auto', async (req, res) => {
 // 存档（含自动存档 slot=0）
 router.post('/', async (req, res) => {
   try {
-    const { slot, scene_id, game_id, title, play_time, audio_label, sub_label, scene_history, attributes } = req.body;
+    let { slot, scene_id, game_id, title, play_time, audio_label, sub_label, scene_history, attributes } = req.body;
+
+    // ===== 输入校验（防伪造存档/越权写） =====
+    slot = parseInt(slot);
+    // slot 白名单: 1-9 手动档; 负数 slot 仅允许 -game_id（自动档）, 0 兜底档
+    if (!Number.isFinite(slot)) slot = 1;
+    if (slot > 0 && (slot < 1 || slot > 9)) return res.status(400).json({ error: '存档位无效(1-9)' });
+    if (slot < 0 && game_id && slot !== -parseInt(game_id)) {
+      return res.status(400).json({ error: '自动存档位与游戏不匹配' });
+    }
+    // scene_id 必须真实存在
+    if (!scene_id) return res.status(400).json({ error: '缺少场景ID' });
+    const [scRows] = await pool.query('SELECT id, game_id FROM scenes WHERE id = ?', [scene_id]);
+    if (scRows.length === 0) return res.status(400).json({ error: '场景不存在' });
+    // game_id 与场景归属一致（未传则取场景的, 防伪造归属）
+    if (game_id && parseInt(game_id) !== scRows[0].game_id) {
+      return res.status(400).json({ error: 'game_id 与场景归属不一致' });
+    }
+    game_id = scRows[0].game_id;
 
     // 场景历史栈（数组），供读档后"返回上一场景"使用
     const historyJson = Array.isArray(scene_history)
       ? JSON.stringify(scene_history.map(Number).filter(Number.isFinite))
       : null;
 
-    // 游戏属性值快照 {attr_id: value}
-    const attrJson = (attributes && typeof attributes === 'object' && !Array.isArray(attributes))
-      ? JSON.stringify(attributes) : null;
+    // 游戏属性值快照 {attr_id: value} — 只保留该游戏已定义属性的整数值
+    let attrJson = null;
+    if (attributes && typeof attributes === 'object' && !Array.isArray(attributes)) {
+      const [defs] = await pool.query('SELECT id FROM game_attributes WHERE game_id = ?', [game_id]);
+      const validIds = new Set(defs.map(d => String(d.id)));
+      const clean = {};
+      for (const [k, v] of Object.entries(attributes)) {
+        if (validIds.has(String(k))) clean[k] = Math.max(0, parseInt(v) || 0);
+      }
+      attrJson = JSON.stringify(clean);
+    }
 
     await pool.query(
       `INSERT INTO saves (user_id, slot, scene_id, game_id, title, play_time, audio_label, sub_label, history_json, attributes_json)

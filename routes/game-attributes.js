@@ -155,13 +155,21 @@ router.put('/effects/:dialogueId', authenticate, authorize('admin', 'editor'), a
     const gameId = dRows[0].game_id;
 
     const list = Array.isArray(effects) ? effects : [];
-    const valid = [];
-    for (const e of list) {
-      if (!e.attr_id) continue;
-      const [a] = await conn.query('SELECT id FROM game_attributes WHERE id = ? AND game_id = ?', [e.attr_id, gameId]);
-      if (a.length === 0) { await conn.rollback(); conn.release(); return res.status(400).json({ error: '属性不存在或不属于该游戏' }); }
-      valid.push([dialogueId, e.attr_id, parseInt(e.delta) || 0]);
+    // 一次性校验所有 attr_id（避免循环内 N+1 查询）
+    const attrIds = [...new Set(list.filter(e => e.attr_id).map(e => parseInt(e.attr_id)))].filter(Number.isFinite);
+    if (attrIds.length) {
+      const [aRows] = await conn.query(
+        'SELECT id FROM game_attributes WHERE game_id = ? AND id IN (?)', [gameId, attrIds]);
+      const validSet = new Set(aRows.map(r => r.id));
+      const invalid = attrIds.find(id => !validSet.has(id));
+      if (invalid !== undefined) {
+        await conn.rollback(); conn.release();
+        return res.status(400).json({ error: '属性不存在或不属于该游戏' });
+      }
     }
+    const valid = list
+      .filter(e => e.attr_id && attrIds.includes(parseInt(e.attr_id)))
+      .map(e => [dialogueId, parseInt(e.attr_id), parseInt(e.delta) || 0]);
 
     await conn.query('DELETE FROM dialogue_option_effects WHERE dialogue_id = ?', [dialogueId]);
     if (valid.length) {
