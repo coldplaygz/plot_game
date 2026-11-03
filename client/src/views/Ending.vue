@@ -61,7 +61,8 @@ function goLobby() {
 function replay() {
   const gameId = game.currentGameId
   game.returnToLobby()
-  if (gameId) router.push('/play/' + gameId)
+  // ?new=1: 显式新开一局（GamePlayer 挂载默认是"继续游戏"）
+  if (gameId) router.push({ path: '/play/' + gameId, query: { new: '1' } })
   else router.push('/')
 }
 </script>

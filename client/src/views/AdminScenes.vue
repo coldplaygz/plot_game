@@ -334,11 +334,62 @@
         <p class="text-[11px] text-text-dimmer mt-1">提问：其子节点作为候选项按钮弹出，玩家点选后播放该选项下的后续对白；后续对白里可继续加对白或再嵌套提问，层级不限</p>
       </div>
       <div class="mb-[14px]">
-        <label class="block text-xs text-text-dim mb-1">角色 <span class="text-text-dimmer">(决定对白头像, 说话人自动带出)</span></label>
+        <label class="block text-xs text-text-dim mb-1">角色 <span class="text-text-dimmer">(决定对白形象与名牌, 说话人自动带出)</span></label>
         <select v-model="dialogueForm.character_id" class="picker w-full" @change="onDialogueCharChange">
           <option :value="null">不关联角色</option>
           <option v-for="ch in sceneCharacters" :key="ch.id" :value="ch.id">{{ ch.name }}</option>
         </select>
+      </div>
+      <div v-if="dialogueForm.character_id && dialogueExpressions.length" class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1.5">表情 <span class="text-text-dimmer">(对白显示该表情形象图, 点选; 再点一次取消=默认形象)</span></label>
+        <div class="flex flex-wrap gap-2">
+          <!-- 默认形象选项 -->
+          <button type="button"
+            class="flex flex-col items-center gap-1 w-16 cursor-pointer bg-transparent border-none p-0"
+            :class="!dialogueForm.expression ? 'opacity-100' : 'opacity-40 hover:opacity-70'"
+            @click="dialogueForm.expression = null">
+            <div class="w-12 h-12 rounded-lg flex items-center justify-center text-white/60 text-[10px] border-2 bg-white/5"
+              :class="!dialogueForm.expression ? 'border-brand-purple' : 'border-white/15'">默认</div>
+            <span class="text-[10px]" :class="!dialogueForm.expression ? 'text-white' : 'text-text-dimmer'">默认</span>
+          </button>
+          <!-- 表情形象选项 -->
+          <button type="button" v-for="e in dialogueExpressions" :key="e.key"
+            class="flex flex-col items-center gap-1 w-16 cursor-pointer bg-transparent border-none p-0"
+            :class="dialogueForm.expression === e.key ? 'opacity-100' : 'opacity-40 hover:opacity-70'"
+            @click="dialogueForm.expression = dialogueForm.expression === e.key ? null : e.key">
+            <img :src="'/' + e.avatar"
+              class="w-12 h-12 rounded-lg object-contain bg-white/5 border-2"
+              :class="dialogueForm.expression === e.key ? 'border-brand-purple' : 'border-transparent'"
+              :style="dialogueForm.expression === e.key ? {} : { borderColor: (sceneCharacters.find(c => c.id === dialogueForm.character_id)?.color) || 'rgba(255,255,255,0.15)' }" />
+            <span class="text-[10px]" :class="dialogueForm.expression === e.key ? 'text-white' : 'text-text-dimmer'">{{ e.label }}</span>
+          </button>
+        </div>
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1.5">文字特效 <span class="text-text-dimmer">(对白文本的显示效果, 点选; 再点一次取消=普通)</span></label>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" v-for="fx in textEffectOptions" :key="fx.value"
+            class="px-3 py-1.5 rounded-full text-[12px] border cursor-pointer bg-transparent transition-opacity"
+            :class="dialogueForm.text_effect === fx.value
+              ? 'border-brand-purple opacity-100'
+              : 'border-white/15 text-text-dim opacity-60 hover:opacity-90'"
+            @click="dialogueForm.text_effect = dialogueForm.text_effect === fx.value ? null : fx.value">
+            {{ fx.label }}
+          </button>
+        </div>
+      </div>
+      <div class="mb-[14px]">
+        <label class="block text-xs text-text-dim mb-1.5">文字大小 <span class="text-text-dimmer">(默认跟随播放器字号, 可强制指定)</span></label>
+        <div class="flex flex-wrap gap-2 items-center">
+          <button type="button" v-for="sz in textSizeOptions" :key="sz.value"
+            class="px-3 py-1.5 rounded-full text-[12px] border cursor-pointer bg-transparent transition-opacity"
+            :class="dialogueForm.text_size === sz.value
+              ? 'border-brand-purple opacity-100'
+              : 'border-white/15 text-text-dim opacity-60 hover:opacity-90'"
+            @click="dialogueForm.text_size = dialogueForm.text_size === sz.value ? null : sz.value">
+            <span :class="sz.cls">{{ sz.label }}</span>
+          </button>
+        </div>
       </div>
       <div class="mb-[14px]">
         <label class="block text-xs text-text-dim mb-1">说话人 <span class="text-text-dimmer">(选角色自动填充, 可手写改)</span></label>
@@ -929,12 +980,35 @@ const dialogueForm = ref(getEmptyDialogueForm())
 
 function getEmptyDialogueForm() {
   return {
-    parent_id: null, node_type: 'line', character_id: null, speaker: '', text: '',
+    parent_id: null, node_type: 'line', character_id: null, expression: null, text_effect: null, text_size: null, speaker: '', text: '',
     text_en: '', text_ja: '', text_ko: '',
     show_time: 0, duration: 0, sort_order: 0,
     min_attr_id: null, min_value: 0
   }
 }
+
+// 文字特效选项（与后端 routes/dialogues.js 白名单保持一致）
+const textEffectOptions = [
+  { value: 'angry', label: '😠 愤怒' },
+  { value: 'shock', label: '⚡ 震惊' },
+  { value: 'sad', label: '💧 悲伤' },
+  { value: 'happy', label: '✨ 开心' },
+  { value: 'whisper', label: '🤫 低语' },
+]
+
+// 文字大小选项（与后端白名单一致; cls=按钮预览字号 Tailwind 类）
+const textSizeOptions = [
+  { value: 'small', label: '小', cls: 'text-[11px]' },
+  { value: 'medium', label: '中', cls: 'text-[14px]' },
+  { value: 'large', label: '大', cls: 'text-[18px]' },
+  { value: 'xlarge', label: '特大', cls: 'text-[24px]' },
+]
+
+// 当前编辑角色可用的表情列表（决定表情下拉是否显示与选项）
+const dialogueExpressions = computed(() => {
+  const ch = sceneCharacters.value.find(c => c.id === dialogueForm.value.character_id)
+  return ch?.expressions || []
+})
 
 function openDialogueEditModal(id, parentId = null, nodeType = 'line') {
   editingDialogueId.value = id
@@ -948,6 +1022,9 @@ function openDialogueEditModal(id, parentId = null, nodeType = 'line') {
         parent_id: found.parent_id || null,
         node_type: found.node_type || 'line',
         character_id: found.character_id || null,
+        expression: found.expression || null,
+        text_effect: found.text_effect || null,
+        text_size: found.text_size || null,
         speaker: found.speaker || '',
         text: found.text || '',
         text_en: tI18n.en || '', text_ja: tI18n.ja || '', text_ko: tI18n.ko || '',
@@ -975,6 +1052,9 @@ async function saveDialogue() {
     parent_id: dialogueForm.value.parent_id || null,
     node_type: dialogueForm.value.node_type,
     character_id: dialogueForm.value.character_id || null,
+    expression: dialogueForm.value.character_id ? (dialogueForm.value.expression || null) : null,
+    text_effect: dialogueForm.value.text_effect || null,
+    text_size: dialogueForm.value.text_size || null,
     speaker: dialogueForm.value.speaker || null,
     text: dialogueForm.value.text,
     show_time: parseInt(dialogueForm.value.show_time) || 0,
@@ -1053,8 +1133,9 @@ async function preloadLibrary() {
   } catch (e) {}
 }
 
-// 对白编辑表单：选角色 → 说话人自动填角色名
+// 对白编辑表单：选角色 → 说话人自动填角色名 + 重置表情（表情列表随角色变化）
 function onDialogueCharChange() {
+  dialogueForm.value.expression = null
   if (dialogueForm.value.character_id) {
     const ch = sceneCharacters.value.find(c => c.id === dialogueForm.value.character_id)
     if (ch) dialogueForm.value.speaker = ch.name

@@ -104,9 +104,10 @@ app.use('/uploads/covers', express.static('uploads/covers', {
   maxAge: '7d',
   setHeaders: uploadHeaders
 }));
-// 角色头像：公开（播放器对白气泡显示需要）
+// 角色头像/表情形象图：公开（播放器对白立绘显示需要）
+// maxAge 0: 同路径覆盖图片时浏览器必须重新协商(ETag 304), 否则形象图更新后用户端 7 天内看不到
 app.use('/uploads/avatars', express.static('uploads/avatars', {
-  maxAge: '7d',
+  maxAge: 0,
   setHeaders: uploadHeaders
 }));
 // 视频/HLS/音轨/字幕：需 HLS 鉴权（Cookie 或 URL Token）

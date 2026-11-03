@@ -70,91 +70,88 @@
       </div>
     </div>
 
-    <!-- ═══ 对白层（line=点击逐条推进；option=弹出候选项点选；显示期间暂停视频） ═══ -->
-    <div v-if="activeDialogueNode" class="absolute inset-0 z-30 flex items-end justify-center pb-[8rem] sm:pb-[9rem]"
-      @click.stop="advanceDialogue">
-      <!-- 普通对白 -->
-      <div v-if="activeDialogueNode.node_type !== 'option'"
-        class="w-[92%] max-w-2xl dlg-bubble bg-black/80 border border-white/15 rounded-xl px-4 py-3 backdrop-blur-sm shadow-xl">
-        <div class="flex items-start gap-2.5">
-          <!-- 角色头像 -->
-          <img v-if="activeCharAvatar"
+    <!-- ═══ 对白层（立绘+名牌对话框；line=点击逐条推进；option=弹出候选项点选；显示期间暂停视频） ═══ -->
+    <div v-if="activeDialogueNode" class="absolute inset-0 z-30" @click.stop="advanceDialogue">
+      <!-- 对白面板：人物立绘从对话框左后方升起, 底边与框底齐平, 与框体连成一体(无分隔) -->
+      <div class="dlg-panel">
+        <div class="relative w-full max-w-2xl">
+          <img v-if="activeCharAvatar" :key="'dlgfig-' + (activeDialogueNode.character_id || 0)"
             :src="activeCharAvatar"
-            class="w-11 h-11 rounded-full object-cover border-2 shrink-0"
-            :style="{ borderColor: activeCharColor || '#8b5cf6' }" />
-          <div v-else-if="activeDialogueNode.speaker"
-            class="w-11 h-11 rounded-full flex items-center justify-center text-white text-base shrink-0"
-            :style="{ background: activeCharColor || '#8b5cf6' }">{{ activeDialogueNode.speaker.charAt(0) }}</div>
-          <div class="flex-1 min-w-0">
-            <span v-if="activeDialogueNode.speaker"
-              class="block text-xs sm:text-sm mb-1" :style="{ color: activeCharColor || '#a78bfa' }">{{ activeDialogueNode.speaker }}</span>
-            <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap">{{ activeDialogueNode?.text }}</span>
+            class="dlg-figure" />
+          <!-- 说话人名牌（框左上角, 角色主题色渐变, 无主题色时金色兜底） -->
+          <div v-if="activeDialogueNode.speaker" class="dlg-nameplate" :style="nameplateVars">{{ activeDialogueNode.speaker }}</div>
+          <!-- 普通对白（有名牌时正文让出顶部空间） -->
+          <div v-if="activeDialogueNode.node_type !== 'option'"
+            class="dlg-box bg-black/75 border border-white/15 px-4 py-3 backdrop-blur-sm shadow-xl"
+            :class="activeDialogueNode.speaker ? 'rounded-xl pt-[2.9rem]' : 'rounded-xl'">
+            <span class="block leading-relaxed whitespace-pre-wrap"
+              :class="[textEffectClass, textSizeClass]">{{ activeDialogueNode?.text }}</span>
+            <svg viewBox="0 0 24 24" class="dlg-next-arrow absolute right-2.5 bottom-1.5 w-5 h-5 text-amber-400" fill="none"
+              stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 9l6 6 6-6" />
+            </svg>
           </div>
-        </div>
-        <div class="mt-1.5 text-right text-[10px] text-white/40">点击继续 ▸</div>
-      </div>
-      <!-- 对白选项（提问）：子节点作为候选项按钮 -->
-      <div v-else class="w-[92%] max-w-2xl dlg-bubble bg-black/80 border border-white/15 rounded-xl px-4 py-3 backdrop-blur-sm shadow-xl">
-        <div class="flex items-start gap-2.5 mb-2">
-          <img v-if="activeCharAvatar"
-            :src="activeCharAvatar"
-            class="w-11 h-11 rounded-full object-cover border-2 shrink-0"
-            :style="{ borderColor: activeCharColor || '#8b5cf6' }" />
-          <div v-else-if="activeDialogueNode.speaker"
-            class="w-11 h-11 rounded-full flex items-center justify-center text-white text-base shrink-0"
-            :style="{ background: activeCharColor || '#8b5cf6' }">{{ activeDialogueNode.speaker.charAt(0) }}</div>
-          <div class="flex-1 min-w-0">
-            <span v-if="activeDialogueNode.speaker"
-              class="block text-xs sm:text-sm mb-1" :style="{ color: activeCharColor || '#a78bfa' }">{{ activeDialogueNode.speaker }}</span>
-            <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap">{{ activeDialogueNode.text }}</span>
-          </div>
-        </div>
-        <div class="flex flex-col gap-1.5">
-          <button v-for="opt in activeDialogueOptions" :key="opt.id"
-            class="text-left px-3 py-2 rounded-lg border transition-colors text-sm"
-            :class="optionGated(opt)
-              ? 'bg-white/5 border-white/10 text-white/40 cursor-not-allowed'
-              : 'bg-white/10 border-white/15 hover:bg-brand-purple/30 hover:border-brand-purple text-white'"
-            :disabled="optionGated(opt)"
-            @click.stop="optionGated(opt) ? null : pickDialogueOption(opt.id)">
-            <div class="flex items-center gap-2">
-              <span class="min-w-0 flex-1">{{ opt.text }}</span>
-              <!-- 属性门槛标记：未达标显示锁 -->
-              <span v-if="optionGated(opt)"
-                class="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border bg-amber-500/10 border-amber-400/30 text-amber-300">
-                🔒 {{ gateAttrName(opt.min_attr_id) }} 需 {{ opt.min_value }}（当前 {{ gateAttrValue(opt.min_attr_id) }}）
-              </span>
-              <!-- 属性影响标记 +N / -N -->
-              <span v-for="eff in dialogueOptionEffects(opt.id)" :key="eff.attr_id"
-                class="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border"
-                :class="eff.delta >= 0
-                  ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-300'
-                  : 'bg-red-500/15 border-red-400/30 text-red-300'">
-                {{ eff.attr_name }} {{ eff.delta >= 0 ? '+' : '' }}{{ eff.delta }}
-              </span>
+          <!-- 对白选项（提问）：子节点作为候选项按钮 -->
+          <div v-else
+            class="dlg-box bg-black/75 border border-white/15 px-4 py-3 backdrop-blur-sm shadow-xl"
+            :class="activeDialogueNode.speaker ? 'rounded-xl pt-[2.9rem]' : 'rounded-xl'">
+            <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap mb-2">{{ activeDialogueNode.text }}</span>
+            <div class="flex flex-col gap-1.5">
+              <button v-for="opt in activeDialogueOptions" :key="opt.id"
+                class="text-left px-3 py-2 rounded-lg border transition-colors text-sm"
+                :class="optionGated(opt)
+                  ? 'bg-white/5 border-white/10 text-white/40 cursor-not-allowed'
+                  : optionLocked(opt)
+                    ? 'bg-white/5 border-white/10 text-white/35 cursor-not-allowed'
+                    : opt.id === recordedChoiceId
+                      ? 'bg-brand-purple/25 border-brand-purple/50 text-white'
+                      : 'bg-white/10 border-white/15 hover:bg-brand-purple/30 hover:border-brand-purple text-white'"
+                :disabled="optionGated(opt) || optionLocked(opt)"
+                @click.stop="optionGated(opt) || optionLocked(opt) ? null : pickDialogueOption(opt.id)">
+                <div class="flex items-center gap-2">
+                  <span class="min-w-0 flex-1">{{ opt.text }}</span>
+                  <!-- 上次已选标记（场景对白选项记忆） -->
+                  <span v-if="opt.id === recordedChoiceId"
+                    class="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border bg-brand-purple/20 border-brand-purple/40 text-purple-200">✓ 已选</span>
+                  <!-- 属性门槛标记：未达标显示锁 -->
+                  <span v-if="optionGated(opt)"
+                    class="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border bg-amber-500/10 border-amber-400/30 text-amber-300">
+                    🔒 {{ gateAttrName(opt.min_attr_id) }} 需 {{ opt.min_value }}（当前 {{ gateAttrValue(opt.min_attr_id) }}）
+                  </span>
+                  <!-- 属性影响标记 +N / -N -->
+                  <span v-for="eff in dialogueOptionEffects(opt.id)" :key="eff.attr_id"
+                    class="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border"
+                    :class="eff.delta >= 0
+                      ? 'bg-emerald-500/15 border-emerald-400/30 text-emerald-300'
+                      : 'bg-red-500/15 border-red-400/30 text-red-300'">
+                    {{ eff.attr_name }} {{ eff.delta >= 0 ? '+' : '' }}{{ eff.delta }}
+                  </span>
+                </div>
+              </button>
             </div>
-          </button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- ═══ 属性面板（左上角, 有自定义属性时显示） ═══ -->
+    <!-- ═══ 属性面板（左上角横向并排, 紧凑单行, 有自定义属性时显示） ═══ -->
     <div v-if="game.gameAttributes.length"
-      class="absolute top-16 left-3 z-20 flex flex-col gap-1.5 pointer-events-none">
+      class="absolute top-16 left-3 z-20 flex flex-row flex-wrap items-center gap-1 max-w-[60vw] pointer-events-none">
       <div v-for="attr in game.gameAttributes" :key="attr.id"
-        class="flex items-center gap-2 bg-black/60 backdrop-blur-sm border border-white/15 rounded-full pl-2.5 pr-3 py-1">
-        <span class="text-[11px] text-white/70">{{ attr.name }}</span>
-        <span class="text-[13px] font-bold text-white tabular-nums">{{ attr.value }}</span>
+        class="flex items-center gap-1 bg-black/55 backdrop-blur-sm border border-white/10 rounded px-1.5 py-0.5">
+        <span class="text-[10px] leading-none text-white/60">{{ attr.name }}</span>
+        <span class="text-[11px] leading-none font-bold text-white tabular-nums">{{ attr.value }}</span>
       </div>
     </div>
 
-    <!-- ═══ 属性变化飘字（选项结算反馈） ═══ -->
-    <div class="absolute top-16 left-3 z-30 pointer-events-none">
+    <!-- ═══ 属性变化飘字（选项结算反馈, 在属性行下方避免遮挡） ═══ -->
+    <div class="absolute z-30 pointer-events-none"
+      :style="{ top: attrFloatTop, left: '0.75rem' }">
       <div v-for="a in game.attrChangeAnims" :key="a.id"
-        class="attr-float flex items-center gap-1.5 bg-black/70 border border-white/20 rounded-full px-3 py-1 mb-1.5"
+        class="attr-float flex items-center gap-1.5 bg-black/70 border border-white/20 rounded-full px-2 py-0.5 mb-1"
         :class="a.delta >= 0 ? 'border-emerald-400/40' : 'border-red-400/40'">
-        <span class="text-[11px] text-white/80">{{ a.name }}</span>
-        <span class="text-[14px] font-bold tabular-nums"
+        <span class="text-[10px] text-white/80">{{ a.name }}</span>
+        <span class="text-[12px] font-bold tabular-nums"
           :class="a.delta >= 0 ? 'text-emerald-400' : 'text-red-400'">{{ a.delta >= 0 ? '+' : '' }}{{ a.delta }}</span>
       </div>
     </div>
@@ -593,7 +590,7 @@ const activeDialogueNode = computed(() =>
   dialogueActiveId.value ? sceneDialogues.value.find(d => d.id === dialogueActiveId.value) || null : null
 )
 
-// 当前对白的角色头像/主题色（关联角色时显示头像, 未关联但有名则显示首字占位）
+// 当前对白的角色形象图/主题色（关联角色时显示立绘, 说话人名牌取角色色）
 // avatar 存的是 'uploads/avatars/x.png'（无斜杠）→ 必须转成 '/uploads/...' 绝对路径,
 // 否则浏览器把相对 src 按当前路由解析: /play/3 页面会拼成 /play/uploads/... 404
 const activeCharAvatar = computed(() => {
@@ -601,6 +598,12 @@ const activeCharAvatar = computed(() => {
   return a ? '/' + String(a).replace(/^\//, '') : null
 })
 const activeCharColor = computed(() => activeDialogueNode.value?.character_color || null)
+
+// 名牌底色变量：角色主题色渐变（dlg-nameplate 内 color-mix 消费; 未设色时走 CSS 金色兜底）
+const nameplateVars = computed(() => {
+  const c = activeCharColor.value
+  return c ? { '--np-color': c } : {}
+})
 
 // 某节点的直接子节点（按 sort_order, id 排序，与后端返回顺序一致）
 function nodeChildren(id) {
@@ -623,6 +626,20 @@ function dialogueOptionEffects(optionId) {
   })
 }
 
+// ═══ 场景对白选项记忆：本提问节点是否有历史选择（未过场景重进保留, 其他选项锁定不可改选） ═══
+const recordedChoiceId = computed(() => {
+  const node = activeDialogueNode.value
+  if (!node || node.node_type !== 'option') return null
+  const sid = game.currentScene?.id
+  if (sid == null) return null
+  const rec = game.getRecordedChoice(sid, node.id)
+  // 记录的选项已不在当前候选中（内容被编辑过）→ 视为无记录
+  return rec && nodeChildren(node.id).some(c => c.id === rec) ? rec : null
+})
+function optionLocked(opt) {
+  return recordedChoiceId.value !== null && opt.id !== recordedChoiceId.value
+}
+
 // ═══ 选项属性门槛：玩家属性达到 min_value 才可选 ═══
 function optionGated(opt) {
   if (!opt.min_attr_id || !(opt.min_value > 0)) return false
@@ -636,6 +653,25 @@ function gateAttrName(attrId) {
 function gateAttrValue(attrId) {
   return game.gameAttributes.find(a => a.id === attrId)?.value ?? 0
 }
+
+// 文字特效样式类（fx-angry / fx-shock...，后端白名单内才有效果，否则普通显示）
+const textEffectClass = computed(() => {
+  const fx = activeDialogueNode.value?.text_effect
+  return fx ? `fx-${fx}` : ''
+})
+
+// 文字大小样式类（后端白名单 small/medium/large/xlarge, 空=默认 text-sm/base）
+const textSizes = ['small', 'medium', 'large', 'xlarge']
+const textSizeClass = computed(() => {
+  const s = activeDialogueNode.value?.text_size
+  return textSizes.includes(s) ? `dt-${s}` : ''
+})
+
+// 飘字起始 y：属性行下方（属性行 top-16=4rem 起；单行约 1.5rem, 换行时按比例下移）
+const attrFloatTop = computed(() => {
+  const rows = Math.ceil(game.gameAttributes.length / 3) || 1  // 每3个约一行
+  return `calc(4rem + ${rows * 1.6}rem)`
+})
 
 // 检测触发（onTimeUpdate 调用）：视频播到根对白 show_time → 暂停视频开始对白
 function checkDialogueTrigger() {
@@ -673,13 +709,21 @@ function advanceDialogue() {
 
 // 玩家点了某个对白选项：进入该选项分支 —— 选项节点的子节点继续逐条显示
 // 分支里遇到提问节点会再弹出提问，层级不限；同时结算该选项的属性影响
+// 场景对白选项记忆：未过场景重进时保留上次选择（不允许改选其他, 也不重复结算属性）
 async function pickDialogueOption(childId) {
   const node = activeDialogueNode.value
   if (!node) return
+  const sid = game.currentScene?.id
+  const recorded = sid != null ? game.getRecordedChoice(sid, node.id) : null
+  // 已有历史选择时不允许改选其他选项
+  if (recorded && recorded !== childId) return
   dialogueChosenId.value = childId
   dialogueActiveId.value = null
-  // 属性影响结算（飘字 + 数值变化，服务端校验）
-  game.applyDialogueEffects(childId)
+  // 属性影响结算（飘字 + 数值变化，服务端校验）；仅首次选择时结算
+  if (!recorded) {
+    if (sid != null) game.recordDialogueChoice(sid, node.id, childId)
+    game.applyDialogueEffects(childId)
+  }
   const next = nodeChildren(childId).find(c => !shownDialogueIds.has(c.id))
   if (next) {
     startDialogue(next)
@@ -1300,7 +1344,14 @@ onMounted(async () => {
   // 道具加载由 watch(currentScene) 触发，按场景 ID 过滤
   const gameId = route.params.gameId
   if (gameId && !game.currentScene) {
-    await game.startNewGame(parseInt(gameId) || gameId)
+    // ?new=1（详情页"重新开始"/结局页"再看一次"）= 显式新开一局（清属性+对白记忆）
+    // 否则默认继续游戏（读自动档: 场景+属性快照+历史栈），无自动档才新开
+    if (route.query.new === '1') {
+      await game.startNewGame(parseInt(gameId) || gameId)
+    } else {
+      const ok = await game.continueGame(parseInt(gameId) || gameId)
+      if (!ok) await game.startNewGame(parseInt(gameId) || gameId)
+    }
   }
   if (!game.currentScene) router.push('/')
 })
@@ -1370,15 +1421,94 @@ video::cue {
   to { transform: scaleX(1); opacity: 1; }
 }
 
-/* ═══ 对白气泡过渡 ═══ */
-.dlg-enter-active,
-.dlg-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+/* ═══ 对白层：立绘 + 金色名牌对话框（仿互动剧视觉） ═══ */
+/* 关键定位写死在组件 CSS（不依赖 Tailwind 任意值类, 避免任何构建/缓存变数） */
+/* 角色立绘：挂在框容器内左后方, 底边与框底齐平 — 从框里"长"出来, 与框连成一体无分隔 */
+.dlg-figure {
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  height: clamp(240px, 50vh, 460px);
+  max-width: 60%;
+  width: auto;
+  object-fit: contain;
+  object-position: bottom;
+  z-index: 0;
+  pointer-events: none;
+  animation: dlg-fig-in 0.32s ease-out both;
+  filter: drop-shadow(0 14px 24px rgba(0, 0, 0, 0.55));
 }
-.dlg-enter-from,
-.dlg-leave-to {
-  opacity: 0;
-  transform: translateY(8px);
+@media (min-width: 640px) {
+  .dlg-figure { height: clamp(240px, 64vh, 640px); }
+}
+@keyframes dlg-fig-in {
+  from { opacity: 0; transform: translate(-26px, 10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 对话框容器：底部悬浮, 抬高到控制栏上方 */
+.dlg-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 12px 7.5rem;
+  z-index: 2;
+}
+@media (min-width: 640px) {
+  .dlg-panel { padding: 0 12px 8.5rem; }
+}
+
+/* 说话人名牌：主题色渐变（--np-color 由角色 color 注入, 未设色时兜底金色） */
+.dlg-nameplate {
+  --np-color: #c9900f;
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  height: 1.9rem;
+  padding: 0 1.1rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--np-color) 30%, #ffe9a8) 0%,
+    var(--np-color) 55%,
+    color-mix(in srgb, var(--np-color) 62%, #2b1800) 100%);
+  animation: dlg-name-in 0.25s ease-out both;
+}
+@keyframes dlg-name-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.92); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 对话框：名牌下方升入；置在立绘上方(人物下半身沉入框后) */
+.dlg-box {
+  position: relative;
+  z-index: 1;
+  animation: dlg-box-in 0.28s ease-out both;
+}
+@keyframes dlg-box-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 继续指示：金色下箭头弹性律动 */
+.dlg-next-arrow {
+  animation: dlg-arrow-bounce 1.1s ease-in-out infinite;
+  filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.6));
+}
+@keyframes dlg-arrow-bounce {
+  0%, 100% { transform: translateY(0); opacity: 0.85; }
+  50%      { transform: translateY(3px); opacity: 1; }
 }
 
 /* ═══ 选项框主题样式（由 game.themeConfig 注入 CSS 变量驱动） ═══
@@ -1511,4 +1641,70 @@ video::cue {
   75%  { transform: translate(-3px, 2px); }
   100% { transform: translate(0, 0); }
 }
+
+/* ═══ 对白文字特效（作用在文本 span 本身, 不影响说话人名） ═══ */
+span.fx-angry {
+  color: #fca5a5 !important;
+  text-shadow: 0 0 1px #ef4444, 0 0 8px rgba(239, 68, 68, 0.55), 1.5px 0 0 rgba(220, 38, 38, 0.75), -1.5px 0 0 rgba(220, 38, 38, 0.75);
+  animation: fx-angry-shake 0.12s linear infinite;
+}
+@keyframes fx-angry-shake {
+  0% { transform: translate(0, 0); }
+  25% { transform: translate(-1px, 0.5px); }
+  50% { transform: translate(1px, -0.5px); }
+  75% { transform: translate(-0.5px, -0.5px); }
+  100% { transform: translate(0, 0); }
+}
+
+span.fx-shock {
+  color: #fef08a !important;
+  text-shadow: 0 0 2px #facc15, 0 0 10px rgba(250, 204, 21, 0.8), 0 0 22px rgba(250, 204, 21, 0.45);
+  animation: fx-shock-flash 0.7s steps(2, jump-none) infinite;
+}
+@keyframes fx-shock-flash {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  50% { opacity: 0.82; filter: brightness(1.35); }
+}
+
+span.fx-sad {
+  color: #93c5fd !important;
+  text-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
+  filter: drop-shadow(0 1.5px 0 rgba(30, 58, 138, 0.55));
+  animation: fx-sad-sink 2.6s ease-in-out infinite;
+}
+@keyframes fx-sad-sink {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(1.5px); opacity: 0.85; }
+}
+
+span.fx-happy {
+  color: #fde68a !important;
+  text-shadow: 0 0 2px #fbbf24, 0 0 9px rgba(251, 191, 36, 0.55);
+  animation: fx-happy-bounce 0.9s ease-in-out infinite;
+}
+@keyframes fx-happy-bounce {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(-2px) rotate(-0.6deg); }
+  60% { transform: translateY(0.5px) rotate(0.6deg); }
+}
+
+span.fx-whisper {
+  color: rgba(226, 232, 240, 0.78) !important;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 4px rgba(148, 163, 184, 0.25);
+  animation: fx-whisper-breathe 2.8s ease-in-out infinite;
+}
+@keyframes fx-whisper-breathe {
+  0%, 100% { opacity: 0.78; }
+  50% { opacity: 0.52; }
+}
+
+/* ═══ 对白文字大小（dt-xxx, 与特效类可叠加） ═══ */
+span.dt-small  { font-size: 0.8rem  !important; }
+span.dt-medium { font-size: 1rem    !important; }
+span.dt-large  { font-size: 1.35rem !important; }
+span.dt-xlarge { font-size: 1.8rem  !important; line-height: 1.35; }
+
+
 </style>

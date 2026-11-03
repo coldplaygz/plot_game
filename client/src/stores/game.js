@@ -27,6 +27,53 @@ export const useGameStore = defineStore('game', () => {
   const playSeconds = ref(0)
   let playTimer = null
 
+  // ═══ 场景对白选项记忆（在场景中选过但未过场景时, 重进保留上次选择且不允许改选其他） ═══
+  // 结构 { [sceneId]: { options: { [optionNodeId]: chosenChildId } } }
+  // localStorage 持久化（key 按 用户+游戏 隔离）: 关页面/换标签页/隔天继续游戏都保留
+  const DIALOGUE_HIST_PREFIX = 'pg_dialogue_history'
+  function dialogueHistKey() {
+    return `${DIALOGUE_HIST_PREFIX}_u${authStore.user?.id ?? 'anon'}_g${currentGameId.value ?? 'any'}`
+  }
+  let dialogueHistLoadedKey = null
+  const dialogueHistory = ref({})
+  function ensureDialogueHistory() {
+    const key = dialogueHistKey()
+    if (dialogueHistLoadedKey === key) return
+    dialogueHistLoadedKey = key
+    try {
+      const v = JSON.parse(localStorage.getItem(key))
+      dialogueHistory.value = v && typeof v === 'object' ? v : {}
+    } catch { dialogueHistory.value = {} }
+  }
+  function persistDialogueHistory() {
+    ensureDialogueHistory()
+    try { localStorage.setItem(dialogueHistKey(), JSON.stringify(dialogueHistory.value)) } catch { /* ignore */ }
+  }
+  function recordDialogueChoice(sceneId, optionNodeId, childId) {
+    ensureDialogueHistory()
+    const key = String(sceneId)
+    const h = dialogueHistory.value[key] || (dialogueHistory.value[key] = { options: {} })
+    if (!h.options) h.options = {}
+    h.options[String(optionNodeId)] = childId
+    persistDialogueHistory()
+  }
+  function getRecordedChoice(sceneId, optionNodeId) {
+    ensureDialogueHistory()
+    return dialogueHistory.value[String(sceneId)]?.options?.[String(optionNodeId)] || null
+  }
+  function clearSceneDialogueHistory(sceneId) {
+    ensureDialogueHistory()
+    if (dialogueHistory.value[String(sceneId)]) {
+      delete dialogueHistory.value[String(sceneId)]
+      persistDialogueHistory()
+    }
+  }
+  function clearAllDialogueHistory() {
+    ensureDialogueHistory()
+    dialogueHistory.value = {}
+    persistDialogueHistory()
+  }
+
   function langParam() {
     const l = langStore.current
     return l && l !== 'zh' ? { lang: l } : {}
@@ -47,6 +94,7 @@ export const useGameStore = defineStore('game', () => {
     if (res.error) { toast.show(res.error); return }
     playSeconds.value = 0
     sceneHistory.value = []   // 新游戏清空历史
+    clearAllDialogueHistory()  // 重玩：清空全部场景对白选择记忆（重新可自由选择）
     themeConfig.value = res.theme_config || null
     // 游戏属性：重玩清零 —— 一律按定义重置（初始值统一 0），影响表重建
     gameAttributes.value = (res.scene?.attributes || []).map(a => ({
@@ -91,8 +139,12 @@ export const useGameStore = defineStore('game', () => {
           if (attr) attr.value = val
         }
       }
+      // 结算完成后立即刷新自动存档快照：否则本场景内选完直接刷新/继续游戏,
+      // 读档会恢复旧快照, 属性加成"丢了"（快照只随 loadScene 写入是原缺陷）
+      autoSave()
       return res?.changes || local
     } catch (e) {
+      autoSave()
       return local
     }
   }
@@ -147,7 +199,9 @@ export const useGameStore = defineStore('game', () => {
     }
 
     startPlayTimer()
-    autoSave()
+    // skipAutoSave: 读档流程中由 loadGame 在属性快照恢复完成后统一写自动档,
+    // 避免此刻先用"默认值0"的属性覆盖掉好快照
+    if (!options.skipAutoSave) autoSave()
   }
 
   // 返回上一场景（扣积分，数额后台 backtrack_cost 配置）
@@ -228,6 +282,8 @@ export const useGameStore = defineStore('game', () => {
     }
 
     if (res.next_scene_id) {
+      // 过场景：清掉当前场景的对白选择记忆（下次再来可重新选择）
+      if (currentScene.value) clearSceneDialogueHistory(currentScene.value.id)
       const sceneRes = await get('/play/scene/' + res.next_scene_id, langParam())
       if (sceneRes.scene) {
         loadScene(sceneRes.scene)
@@ -264,19 +320,21 @@ export const useGameStore = defineStore('game', () => {
       sceneHistory.value = Array.isArray(h) ? h : []
     } catch { sceneHistory.value = [] }
 
-    // 恢复游戏属性值快照（无快照的旧档 → 保持当前值/初始值）
-    try {
-      const savedAttrs = save.attributes_json ? JSON.parse(save.attributes_json) : null
-      if (savedAttrs && typeof savedAttrs === 'object') {
-        for (const attr of gameAttributes.value) {
-          if (savedAttrs[attr.id] !== undefined) attr.value = savedAttrs[attr.id]
-        }
-      }
-    } catch { /* ignore */ }
-
+    // 属性快照的恢复必须放在 loadScene 之后：刷新/继续游戏时 gameAttributes 初始为空,
+    // 提前恢复是空操作, 随后 loadScene 会用 default_value(0) 重新定义属性把快照顶掉
     const sceneRes = await get('/play/scene/' + save.scene_id, langParam())
     if (sceneRes.scene) {
-      loadScene(sceneRes.scene)
+      loadScene(sceneRes.scene, { skipAutoSave: true })  // 先载入场景(定义属性), 暂不写自动档
+      // 恢复属性快照到已定义的属性上
+      try {
+        const savedAttrs = save.attributes_json ? JSON.parse(save.attributes_json) : null
+        if (savedAttrs && typeof savedAttrs === 'object') {
+          for (const attr of gameAttributes.value) {
+            if (savedAttrs[attr.id] !== undefined) attr.value = savedAttrs[attr.id]
+          }
+        }
+      } catch { /* ignore */ }
+      autoSave()  // 以恢复后的完整状态(场景+属性)重写自动档
       toast.show('读档成功！')
       return true
     } else {
@@ -311,6 +369,7 @@ export const useGameStore = defineStore('game', () => {
     playSeconds,
     startNewGame, loadScene, makeChoice, backtrack,
     applyDialogueEffects,
+    recordDialogueChoice, getRecordedChoice, clearSceneDialogueHistory, clearAllDialogueHistory,
     loadGame, continueGame, autoSave,
     startPlayTimer, stopPlayTimer,
     cleanup, returnToLobby

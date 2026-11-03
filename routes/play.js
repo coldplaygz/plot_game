@@ -484,8 +484,8 @@ router.post('/choose', async (req, res) => {
  */
 async function getSceneDialogues(sceneId, lang = '') {
   const [rows] = await pool.query(
-    `SELECT d.id, d.parent_id, d.node_type, d.speaker, d.character_id, d.min_attr_id, d.min_value, d.text, d.text_i18n, d.show_time, d.duration, d.sort_order,
-            c.name AS character_name, c.avatar AS character_avatar, c.color AS character_color
+    `SELECT d.id, d.parent_id, d.node_type, d.speaker, d.character_id, d.expression, d.text_effect, d.text_size, d.min_attr_id, d.min_value, d.text, d.text_i18n, d.show_time, d.duration, d.sort_order,
+            c.name AS character_name, c.avatar AS character_avatar, c.expressions AS character_expressions, c.color AS character_color
      FROM dialogues d
      LEFT JOIN characters c ON d.character_id = c.id
      WHERE d.scene_id = ? ORDER BY d.sort_order ASC, d.id ASC`,
@@ -495,14 +495,25 @@ async function getSceneDialogues(sceneId, lang = '') {
     let text = d.text;
     const i18nText = t(d.text_i18n, lang);
     if (i18nText) text = i18nText;
-    const avatarPath = d.character_avatar || null;
+    // 表情头像解析：对白指定了 expression → 从角色表情列表里取对应头像, 找不到回落默认头像
+    let avatarPath = d.character_avatar || null;
+    if (d.expression && d.character_expressions) {
+      try {
+        const list = JSON.parse(d.character_expressions);
+        const hit = Array.isArray(list) ? list.find(e => e.key === d.expression) : null;
+        if (hit && hit.avatar) avatarPath = hit.avatar;
+      } catch { /* 坏 JSON 回落默认头像 */ }
+    }
     return {
       id: d.id,
       parent_id: d.parent_id,
       node_type: d.node_type || 'line',
       speaker: d.speaker || '',
       character_id: d.character_id || null,
-      character_avatar: avatarPath ? '/' + avatarPath.replace(/^\//, '') : null,
+      expression: d.expression || null,
+      text_effect: d.text_effect || null,
+      text_size: d.text_size || null,
+      character_avatar: avatarPath ? '/' + String(avatarPath).replace(/^\//, '') : null,
       character_color: d.character_color || null,
       min_attr_id: d.min_attr_id || null,
       min_value: d.min_value || 0,

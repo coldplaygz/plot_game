@@ -28,9 +28,14 @@ router.get('/scene/:sceneId', authenticate, authorize('admin', 'editor'), async 
 // 创建对白节点
 router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { scene_id, parent_id, node_type, character_id, min_attr_id, min_value, speaker, text, text_i18n, show_time, duration, sort_order } = req.body;
+    const { scene_id, parent_id, node_type, character_id, expression, text_effect, text_size, min_attr_id, min_value, speaker, text, text_i18n, show_time, duration, sort_order } = req.body;
     if (!scene_id || !text) return res.status(400).json({ error: '场景ID和对白文本不能为空' });
     const nType = node_type === 'option' ? 'option' : 'line';
+    // 文字特效/大小白名单
+    const EFFECTS = ['angry', 'shock', 'sad', 'happy', 'whisper'];
+    const SIZES = ['small', 'medium', 'large', 'xlarge'];
+    const finalEffect = EFFECTS.includes(text_effect) ? text_effect : null;
+    const finalSize = SIZES.includes(text_size) ? text_size : null;
 
     // 校验 parent_id 属于该场景
     if (parent_id) {
@@ -49,8 +54,9 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
       finalGateVal = Math.max(0, parseInt(min_value) || 0);
     }
 
-    // 选了角色且没手写说话人 → speaker 默认取角色名
+    // 选了角色且没手写说话人 → speaker 默认取角色名；表情校验（key 必须在该角色表情列表中）
     let finalSpeaker = speaker || null;
+    let finalExpression = null;
     if (character_id) {
       // 通过 scene_id 反查所属游戏, 再确认角色属于该游戏
       const [sRows] = await pool.query(
@@ -58,16 +64,25 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
         [scene_id]);
       if (sRows.length === 0) return res.status(400).json({ error: '场景不存在' });
       const [cRows] = await pool.query(
-        'SELECT id, name FROM characters WHERE id = ? AND game_id = ?',
+        'SELECT id, name, expressions FROM characters WHERE id = ? AND game_id = ?',
         [character_id, sRows[0].game_id]);
       if (cRows.length === 0) return res.status(400).json({ error: '角色不存在或不属于该场景的游戏' });
       if (!finalSpeaker) finalSpeaker = cRows[0].name;
+      // 表情校验
+      if (expression) {
+        let list = [];
+        try { list = cRows[0].expressions ? JSON.parse(cRows[0].expressions) : []; } catch { list = []; }
+        if (!list.some(e => e.key === expression)) {
+          return res.status(400).json({ error: '该角色没有这个表情，请先在角色管理中添加' });
+        }
+        finalExpression = expression;
+      }
     }
 
     const [result] = await pool.query(
-      `INSERT INTO dialogues (scene_id, parent_id, node_type, character_id, min_attr_id, min_value, speaker, text, text_i18n, show_time, duration, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [scene_id, parent_id || null, nType, character_id || null, finalGateAttr, finalGateVal, finalSpeaker, text,
+      `INSERT INTO dialogues (scene_id, parent_id, node_type, character_id, expression, text_effect, text_size, min_attr_id, min_value, speaker, text, text_i18n, show_time, duration, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [scene_id, parent_id || null, nType, character_id || null, finalExpression, finalEffect, finalSize, finalGateAttr, finalGateVal, finalSpeaker, text,
        text_i18n || null, parseInt(show_time) || 0, parseInt(duration) || 4, parseInt(sort_order) || 0]
     );
     res.status(201).json({ message: '对白创建成功', dialogue: { id: result.insertId } });
@@ -80,7 +95,7 @@ router.post('/', authenticate, authorize('admin', 'editor'), async (req, res) =>
 // 更新对白节点
 router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
-    const { parent_id, node_type, character_id, min_attr_id, min_value, speaker, text, text_i18n, show_time, duration, sort_order } = req.body;
+    const { parent_id, node_type, character_id, expression, text_effect, text_size, min_attr_id, min_value, speaker, text, text_i18n, show_time, duration, sort_order } = req.body;
 
     const [rows] = await pool.query('SELECT id, scene_id FROM dialogues WHERE id = ?', [req.params.id]);
     if (rows.length === 0) return res.status(404).json({ error: '对白不存在' });
@@ -142,6 +157,46 @@ router.put('/:id', authenticate, authorize('admin', 'editor'), async (req, res) 
     if (show_time !== undefined) { fields.push('show_time = ?'); values.push(parseInt(show_time) || 0); }
     if (duration !== undefined) { fields.push('duration = ?'); values.push(parseInt(duration) || 4); }
     if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(sort_order) || 0); }
+    // 文字特效（白名单外一律置 null）
+    if (text_effect !== undefined) {
+      const EFFECTS = ['angry', 'shock', 'sad', 'happy', 'whisper'];
+      fields.push('text_effect = ?'); values.push(EFFECTS.includes(text_effect) ? text_effect : null);
+    }
+    // 文字大小（白名单外一律置 null = 默认字号）
+    if (text_size !== undefined) {
+      const SIZES = ['small', 'medium', 'large', 'xlarge'];
+      fields.push('text_size = ?'); values.push(SIZES.includes(text_size) ? text_size : null);
+    }
+    // 表情：key 必须在该对白所关联角色的表情列表中（传空=清除表情）
+    if (expression !== undefined) {
+      if (expression) {
+        // 角色来源优先级：本次传入的 character_id > 对白已存的 character_id
+        let charId = character_id;
+        if (!charId) {
+          const [own] = await pool.query('SELECT character_id FROM dialogues WHERE id = ?', [req.params.id]);
+          charId = own[0]?.character_id;
+        }
+        if (!charId) return res.status(400).json({ error: '该对白未关联角色，无法设置表情' });
+        const [eRows] = await pool.query(
+          `SELECT c.expressions FROM characters c
+           JOIN scenes s ON s.game_id = c.game_id
+           JOIN dialogues d ON d.scene_id = s.id
+           WHERE c.id = ? AND d.id = ?`,
+          [charId, req.params.id]);
+        let list = [];
+        try { list = eRows[0]?.expressions ? JSON.parse(eRows[0].expressions) : []; } catch { list = []; }
+        if (!list.some(e => e.key === expression)) {
+          return res.status(400).json({ error: '该角色没有这个表情，请先在角色管理中添加' });
+        }
+        fields.push('expression = ?'); values.push(expression);
+        // 只传表情没传 character_id 时，确保 character_id 列也已存在（场景: 角色早绑定好的对白）
+        if (character_id === undefined && !fields.some(f => f.startsWith('character_id'))) {
+          // character_id 已在库中，无需重复写
+        }
+      } else {
+        fields.push('expression = ?'); values.push(null);
+      }
+    }
     if (fields.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
 
     values.push(req.params.id);

@@ -796,6 +796,42 @@ async function migrateCharacterColumns(conn, dbName) {
     }
   } catch (e) { console.warn('[InitDB] dialogues 门槛字段迁移失败:', e.message); }
 
+  // --- 角色表情系统 ---
+  try {
+    const [c1] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='characters' AND COLUMN_NAME='expressions'",
+      [dbName]);
+    if (c1.length === 0) {
+      await conn.query("ALTER TABLE characters ADD COLUMN expressions TEXT DEFAULT NULL COMMENT '表情列表 JSON [{key,label,avatar}]' AFTER avatar");
+      console.log('[InitDB] 已为 characters 表添加 expressions 字段');
+    }
+    const [c2] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogues' AND COLUMN_NAME='expression'",
+      [dbName]);
+    if (c2.length === 0) {
+      await conn.query("ALTER TABLE dialogues ADD COLUMN expression VARCHAR(50) DEFAULT NULL COMMENT '表情key(对应characters.expressions.key, 空=默认头像)' AFTER character_id");
+      console.log('[InitDB] 已为 dialogues 表添加 expression 字段');
+    }
+  } catch (e) { console.warn('[InitDB] 表情字段迁移失败:', e.message); }
+
+  // --- 对白文字特效 ---
+  try {
+    const [c3] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogues' AND COLUMN_NAME='text_effect'",
+      [dbName]);
+    if (c3.length === 0) {
+      await conn.query("ALTER TABLE dialogues ADD COLUMN text_effect VARCHAR(20) DEFAULT NULL COMMENT '文字特效: angry/shock/sad/happy/whisper (空=普通)' AFTER expression");
+      console.log('[InitDB] 已为 dialogues 表添加 text_effect 字段');
+    }
+    const [c4] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='dialogues' AND COLUMN_NAME='text_size'",
+      [dbName]);
+    if (c4.length === 0) {
+      await conn.query("ALTER TABLE dialogues ADD COLUMN text_size VARCHAR(20) DEFAULT NULL COMMENT '文字大小: small/medium/large/xlarge (空=默认)' AFTER text_effect");
+      console.log('[InitDB] 已为 dialogues 表添加 text_size 字段');
+    }
+  } catch (e) { console.warn('[InitDB] text_effect/text_size 迁移失败:', e.message); }
+
   // --- dialogue_library 删 parent_id（平铺化） ---
   try {
     const [cols] = await conn.query(

@@ -1,6 +1,6 @@
 /**
- * 角色管理 API（每游戏独立的对白角色：命名 + 头像）
- * 头像存 uploads/avatars（公开静态，播放器对白气泡直接 <img> 显示）
+ * 角色管理 API（每游戏独立的对白角色：命名 + 形象图）
+ * 形象图存 uploads/avatars（公开静态，播放器对白立绘直接 <img> 显示）
  */
 const express = require('express');
 const multer = require('multer');
@@ -31,7 +31,7 @@ const avatarUpload = multer({
     const allowedMime = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedExt.includes(ext) && allowedMime.includes(file.mimetype)) cb(null, true);
-    else cb(new Error('头像仅支持 JPG/PNG/GIF/WebP'));
+    else cb(new Error('形象图仅支持 JPG/PNG/GIF/WebP'));
   }
 });
 
@@ -40,19 +40,85 @@ function fixFilename(name) {
   try { return Buffer.from(name, 'latin1').toString('utf8'); } catch { return name; }
 }
 
-// 某游戏的全部角色（含对白引用计数）
+// 某游戏的全部角色（含对白引用计数 + 表情列表解析）
 router.get('/game/:gameId', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT ch.id, ch.game_id, ch.name, ch.avatar, ch.color, ch.sort_order, ch.created_at,
+      `SELECT ch.id, ch.game_id, ch.name, ch.avatar, ch.expressions, ch.color, ch.sort_order, ch.created_at,
               (SELECT COUNT(*) FROM dialogues d WHERE d.character_id = ch.id) AS dialogue_count
        FROM characters ch
        WHERE ch.game_id = ? ORDER BY ch.sort_order ASC, ch.id ASC`,
       [req.params.gameId]
     );
+    // expressions JSON → 数组（坏数据降级为空数组）
+    for (const ch of rows) {
+      try { ch.expressions = ch.expressions ? JSON.parse(ch.expressions) : []; }
+      catch { ch.expressions = []; }
+      if (!Array.isArray(ch.expressions)) ch.expressions = [];
+    }
     res.json({ characters: rows });
   } catch (err) {
     console.error('[Characters] 获取失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 上传/更新角色表情头像（multipart: image 字段; body: key, label）
+// 同 key 覆盖（旧文件删除），key 格式：字母数字下划线
+router.post('/:id/expressions', authenticate, authorize('admin', 'editor'), avatarUpload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: '请上传表情图片' });
+    const key = (req.body.key || '').trim();
+    const label = (req.body.label || '').trim();
+    if (!/^[a-zA-Z0-9_]{1,30}$/.test(key)) return res.status(400).json({ error: '表情key只能包含英文/数字/下划线(1-30字符)' });
+    if (!label) return res.status(400).json({ error: '请填写表情名称(如: 生气)' });
+
+    const [rows] = await pool.query('SELECT id, expressions FROM characters WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: '角色不存在' });
+
+    let list = [];
+    try { list = rows[0].expressions ? JSON.parse(rows[0].expressions) : []; } catch { list = []; }
+    if (!Array.isArray(list)) list = [];
+
+    const newAvatar = (req.file.destination + '/' + req.file.filename).replace(/\\/g, '/');
+    // 同 key 覆盖：删除旧文件
+    const old = list.find(e => e.key === key);
+    if (old && old.avatar && fs.existsSync(old.avatar)) { try { fs.unlinkSync(old.avatar); } catch {} }
+    if (old) {
+      old.avatar = newAvatar;
+      old.label = label;
+    } else {
+      list.push({ key, label, avatar: newAvatar });
+    }
+
+    await pool.query('UPDATE characters SET expressions = ? WHERE id = ?', [JSON.stringify(list), req.params.id]);
+    res.json({ message: `表情「${label}」已保存`, expressions: list });
+  } catch (err) {
+    console.error('[Characters] 表情保存失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
+// 删除角色表情
+router.delete('/:id/expressions/:key', authenticate, authorize('admin', 'editor'), async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT expressions FROM characters WHERE id = ?', [req.params.id]);
+    if (rows.length === 0) return res.status(404).json({ error: '角色不存在' });
+    let list = [];
+    try { list = rows[0].expressions ? JSON.parse(rows[0].expressions) : []; } catch { list = []; }
+    const target = list.find(e => e.key === req.params.key);
+    if (!target) return res.status(404).json({ error: '表情不存在' });
+    // 仍在被对白引用的表情不允许删除（否则对白头像失效）
+    const [used] = await pool.query(
+      'SELECT COUNT(*) c FROM dialogues WHERE character_id = ? AND expression = ?',
+      [req.params.id, req.params.key]);
+    if (used[0].c > 0) return res.status(400).json({ error: `该表情被 ${used[0].c} 条对白引用，先在对白中取消使用再删除` });
+    if (target.avatar && fs.existsSync(target.avatar)) { try { fs.unlinkSync(target.avatar); } catch {} }
+    list = list.filter(e => e.key !== req.params.key);
+    await pool.query('UPDATE characters SET expressions = ? WHERE id = ?', [JSON.stringify(list), req.params.id]);
+    res.json({ message: '表情已删除', expressions: list });
+  } catch (err) {
+    console.error('[Characters] 表情删除失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
   }
 });

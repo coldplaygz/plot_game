@@ -236,13 +236,14 @@ function onScreenClick() {
 
 function onStart() {
   // 重新开始会覆盖自动存档（过场景时自动保存），有存档时二次确认
+  // ?new=1: 显式新开一局（GamePlayer 挂载默认是"继续游戏"，必须用标记区分）
   if (autoSaveInfo.value) {
     if (window.confirm('重新开始将覆盖当前进度，确定吗？')) {
       game.cleanup()
-      router.push('/play/' + gameId)
+      router.push({ path: '/play/' + gameId, query: { new: '1' } })
     }
   } else {
-    router.push('/play/' + gameId)
+    router.push({ path: '/play/' + gameId, query: { new: '1' } })
   }
 }
 
