@@ -62,7 +62,7 @@ router.get('/auto', async (req, res) => {
 // 存档（含自动存档 slot=0）
 router.post('/', async (req, res) => {
   try {
-    let { slot, scene_id, game_id, title, play_time, audio_label, sub_label, scene_history, attributes } = req.body;
+    let { slot, scene_id, game_id, title, play_time, audio_label, sub_label, scene_history, attributes, player_name } = req.body;
 
     // ===== 输入校验（防伪造存档/越权写） =====
     slot = parseInt(slot);
@@ -99,14 +99,18 @@ router.post('/', async (req, res) => {
       attrJson = JSON.stringify(clean);
     }
 
+    // 玩家角色命名（属性栏展示）：留 1-24 位；空值更新时不覆盖已有名
+    const playerName = typeof player_name === 'string' ? player_name.trim().slice(0, 24) : null;
+
     await pool.query(
-      `INSERT INTO saves (user_id, slot, scene_id, game_id, title, play_time, audio_label, sub_label, history_json, attributes_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO saves (user_id, slot, scene_id, game_id, title, play_time, audio_label, sub_label, history_json, attributes_json, player_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE scene_id = VALUES(scene_id), game_id = VALUES(game_id),
                                title = VALUES(title), play_time = VALUES(play_time),
                                audio_label = VALUES(audio_label), sub_label = VALUES(sub_label),
-                               history_json = VALUES(history_json), attributes_json = VALUES(attributes_json)`,
-      [req.user.id, slot ?? 1, scene_id, game_id || null, title || '存档', play_time || 0, audio_label || null, sub_label || null, historyJson, attrJson]
+                               history_json = VALUES(history_json), attributes_json = VALUES(attributes_json),
+                               player_name = COALESCE(VALUES(player_name), player_name)`,
+      [req.user.id, slot ?? 1, scene_id, game_id || null, title || '存档', play_time || 0, audio_label || null, sub_label || null, historyJson, attrJson, playerName]
     );
 
     const [saves] = await pool.query(

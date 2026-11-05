@@ -40,11 +40,11 @@ function fixFilename(name) {
   try { return Buffer.from(name, 'latin1').toString('utf8'); } catch { return name; }
 }
 
-// 某游戏的全部角色（含对白引用计数 + 表情列表解析）
+// 某游戏的全部角色（含对白引用计数 + 表情列表解析 + 主角标记）
 router.get('/game/:gameId', authenticate, authorize('admin', 'editor'), async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT ch.id, ch.game_id, ch.name, ch.avatar, ch.expressions, ch.color, ch.sort_order, ch.created_at,
+      `SELECT ch.id, ch.game_id, ch.name, ch.avatar, ch.expressions, ch.color, ch.sort_order, ch.is_protagonist, ch.created_at,
               (SELECT COUNT(*) FROM dialogues d WHERE d.character_id = ch.id) AS dialogue_count
        FROM characters ch
        WHERE ch.game_id = ? ORDER BY ch.sort_order ASC, ch.id ASC`,
@@ -123,7 +123,7 @@ router.delete('/:id/expressions/:key', authenticate, authorize('admin', 'editor'
   }
 });
 
-// 创建角色（可带头像 multipart: avatar）
+// 创建角色（可带头像 multipart: avatar; 可直接标记为主角——同游戏旧主角自动让位）
 router.post('/', authenticate, authorize('admin', 'editor'), avatarUpload.single('avatar'), async (req, res) => {
   try {
     const { game_id, name, color, sort_order } = req.body;
@@ -132,11 +132,16 @@ router.post('/', authenticate, authorize('admin', 'editor'), avatarUpload.single
     const [g] = await pool.query('SELECT id FROM games WHERE id = ?', [game_id]);
     if (g.length === 0) return res.status(400).json({ error: '游戏不存在' });
 
+    const isProtagonist = (req.body.is_protagonist === '1' || req.body.is_protagonist === 1 || req.body.is_protagonist === 'true') ? 1 : 0;
     const avatar = req.file ? (req.file.destination + '/' + req.file.filename).replace(/\\/g, '/') : null;
     const [result] = await pool.query(
-      'INSERT INTO characters (game_id, name, avatar, color, sort_order) VALUES (?, ?, ?, ?, ?)',
-      [game_id, name.trim(), avatar, color || '#e91e63', parseInt(sort_order) || 0]
+      'INSERT INTO characters (game_id, name, avatar, color, sort_order, is_protagonist) VALUES (?, ?, ?, ?, ?, ?)',
+      [game_id, name.trim(), avatar, color || '#e91e63', parseInt(sort_order) || 0, isProtagonist]
     );
+    // 主角唯一：清掉同游戏其他主角
+    if (isProtagonist) {
+      await pool.query('UPDATE characters SET is_protagonist = 0 WHERE game_id = ? AND id != ?', [game_id, result.insertId]);
+    }
     res.status(201).json({ message: '角色创建成功', character: { id: result.insertId, avatar } });
   } catch (err) {
     console.error('[Characters] 创建失败:', err);
@@ -144,7 +149,7 @@ router.post('/', authenticate, authorize('admin', 'editor'), avatarUpload.single
   }
 });
 
-// 更新角色（可替换头像）
+// 更新角色（可替换头像; 可设置/取消主角——设为主角时同游戏旧主角自动取消）
 router.put('/:id', authenticate, authorize('admin', 'editor'), avatarUpload.single('avatar'), async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT id, game_id, avatar FROM characters WHERE id = ?', [req.params.id]);
@@ -156,6 +161,13 @@ router.put('/:id', authenticate, authorize('admin', 'editor'), avatarUpload.sing
     if (name !== undefined && name.trim()) { fields.push('name = ?'); values.push(name.trim()); }
     if (color !== undefined) { fields.push('color = ?'); values.push(color || '#e91e63'); }
     if (sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(sort_order) || 0); }
+    // 主角标记：'1'/'true'/1 = 设为主角, '0'/0 = 取消（multipart 里是字符串）
+    let setProtagonist = null;
+    if (req.body.is_protagonist !== undefined) {
+      const flag = (req.body.is_protagonist === '1' || req.body.is_protagonist === 1 || req.body.is_protagonist === 'true') ? 1 : 0;
+      fields.push('is_protagonist = ?'); values.push(flag);
+      setProtagonist = flag;
+    }
     if (req.file) {
       fields.push('avatar = ?');
       values.push((req.file.destination + '/' + req.file.filename).replace(/\\/g, '/'));
@@ -166,6 +178,10 @@ router.put('/:id', authenticate, authorize('admin', 'editor'), avatarUpload.sing
 
     values.push(req.params.id);
     await pool.query(`UPDATE characters SET ${fields.join(', ')} WHERE id = ?`, values);
+    // 主角唯一：设为主角时清掉同游戏其他主角（本行除外）
+    if (setProtagonist === 1) {
+      await pool.query('UPDATE characters SET is_protagonist = 0 WHERE game_id = ? AND id != ?', [old.game_id, old.id]);
+    }
     res.json({ message: '更新成功' });
   } catch (err) {
     console.error('[Characters] 更新失败:', err);

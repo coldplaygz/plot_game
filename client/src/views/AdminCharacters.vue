@@ -29,7 +29,11 @@
           :style="{ borderColor: ch.color || '#e91e63' }" />
         <div v-else class="w-24 h-28 rounded-lg flex items-center justify-center text-white text-xl shrink-0"
           :style="{ background: ch.color || '#e91e63' }">{{ ch.name.charAt(0) }}</div>
-        <div class="text-white text-[14px]">{{ ch.name }}</div>
+        <div class="text-white text-[14px] flex items-center gap-1.5">
+          <span>{{ ch.name }}</span>
+          <span v-if="ch.is_protagonist"
+            class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] border bg-amber-500/15 border-amber-400/40 text-amber-300">👑 主角</span>
+        </div>
         <div class="text-text-dimmest text-[10px]">排序 {{ ch.sort_order }} · {{ ch.dialogue_count || 0 }} 条对白引用 · {{ (ch.expressions || []).length }} 个表情</div>
         <button v-if="(ch.expressions || []).length || editingExprOf !== ch.id"
           class="d-btn bg-white/10 hover:bg-white/20" @click="openExprEditor(ch)">😀 表情</button>
@@ -73,6 +77,13 @@
           <input v-model.number="charForm.sort_order" type="number" class="w-full px-3 py-[9px] bg-surface-darkest border border-border-dim rounded-lg text-white text-[13px] outline-none focus:border-brand-purple" />
         </div>
       </div>
+      <label class="flex items-start gap-2.5 mb-[14px] cursor-pointer select-none">
+        <input v-model="charForm.is_protagonist" type="checkbox" class="mt-0.5 w-4 h-4 accent-purple-600 shrink-0" />
+        <span class="text-[12px] leading-relaxed">
+          <span class="text-amber-300">👑 设为主角</span>
+          <span class="block text-text-dim">每个游戏仅一名主角（设新主角自动取消旧主角）。玩家开始游戏输入的名字将作为主角在对白中显示的说话人名。</span>
+        </span>
+      </label>
 
       <template #actions>
         <button class="btn-ghost" @click="formOpen = false">取消</button>
@@ -95,7 +106,13 @@
           class="flex flex-col items-center gap-1 border border-border-dim rounded-lg p-2 bg-surface-darkest">
           <img :src="'/' + e.avatar" class="w-14 h-16 rounded-lg object-contain bg-white/5 border-2" :style="{ borderColor: exprChar.color || '#e91e63' }" />
           <span class="text-[11px] text-white">{{ e.label }}</span>
-          <button class="d-btn bg-[#dc2626] hover:bg-[#b91c1c]" @click="deleteExpr(e.key)">删除</button>
+          <div class="flex gap-1">
+            <!-- 替换形象图：同 key 覆盖上传, 引用该表情的对白无需改动（不会像删除那样失败） -->
+            <button class="d-btn bg-brand-purple/70 hover:bg-brand-purple" @click="replaceExpr(e)">替换</button>
+            <button class="d-btn bg-[#dc2626] hover:bg-[#b91c1c]" @click="deleteExpr(e.key)">删除</button>
+          </div>
+          <input v-if="replacingKey === e.key" type="file" accept="image/*" class="hidden"
+            :ref="el => { if (el) replaceInputEl = el }" @change="onReplaceFileChange($event, e)" />
         </div>
       </div>
 
@@ -128,7 +145,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useApi } from '../composables/useApi'
 import { useToast } from '../composables/useToast'
 import AppModal from '../components/AppModal.vue'
@@ -159,7 +176,7 @@ const charAvatarPreview = ref(null)
 const charForm = ref(getEmptyCharForm())
 
 function getEmptyCharForm() {
-  return { id: 0, name: '', color: '#e91e63', sort_order: 0, avatarFile: null, hasAvatar: false }
+  return { id: 0, name: '', color: '#e91e63', sort_order: 0, is_protagonist: false, avatarFile: null, hasAvatar: false }
 }
 
 function onCharAvatarChange(e) {
@@ -208,6 +225,32 @@ async function saveExpr() {
   } catch (e) { show('保存失败: ' + e.message) }
 }
 
+// ═══ 替换表情形象图（同 key 覆盖：引用该表情的对白自动换图, 无需先取消引用） ═══
+const replacingKey = ref(null)
+let replaceInputEl = null
+
+function replaceExpr(e) {
+  replacingKey.value = e.key
+  // 等隐藏 input 渲染出来再唤起文件选择
+  nextTick(() => { if (replaceInputEl) replaceInputEl.click() })
+}
+
+async function onReplaceFileChange(ev, e) {
+  const f = ev.target.files && ev.target.files[0]
+  ev.target.value = ''           // 允许再次选同一文件
+  replacingKey.value = null
+  if (!f) return
+  const fd = new FormData()
+  fd.append('image', f)
+  fd.append('key', e.key)        // 同 key → 服务端覆盖旧图并删旧文件
+  fd.append('label', e.label)
+  try {
+    const r = await post(`/characters/${exprChar.value.id}/expressions`, fd)
+    show(`「${e.label}」形象图已替换`)
+    try { exprChar.value.expressions = r.expressions || [] } catch {}
+  } catch (err) { show('替换失败: ' + err.message) }
+}
+
 async function deleteExpr(key) {
   if (!confirm('删除该表情?')) return
   try {
@@ -219,7 +262,7 @@ async function deleteExpr(key) {
 
 function openCharEdit(ch) {
   charForm.value = { id: ch.id, name: ch.name, color: ch.color || '#e91e63',
-    sort_order: ch.sort_order || 0, avatarFile: null, hasAvatar: !!ch.avatar }
+    sort_order: ch.sort_order || 0, is_protagonist: !!ch.is_protagonist, avatarFile: null, hasAvatar: !!ch.avatar }
   charAvatarPreview.value = ch.avatar ? '/' + ch.avatar : null
   formOpen.value = true
 }
@@ -235,6 +278,7 @@ async function saveChar() {
   fd.append('name', charForm.value.name)
   fd.append('color', charForm.value.color || '#e91e63')
   fd.append('sort_order', charForm.value.sort_order || 0)
+  fd.append('is_protagonist', charForm.value.is_protagonist ? '1' : '0')
   if (charForm.value.avatarFile) fd.append('avatar', charForm.value.avatarFile)
   try {
     if (charForm.value.id > 0) {

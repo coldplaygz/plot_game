@@ -25,7 +25,35 @@ export const useGameStore = defineStore('game', () => {
   const showingChoices = ref(false)
   const currentAudioEl = ref(null)
   const playSeconds = ref(0)
+  // ═══ 玩家角色命名（随自动档存服务端, 属性栏首位展示） ═══
+  const playerName = ref('')            // 当前角色名（开始时命名/随机生成, 读档恢复）
+  const pendingPlayerName = ref(null)   // 命名弹窗确认后暂存, GamePlayer 挂载 startNewGame 时消费
   let playTimer = null
+
+  // 随机名生成：中文单姓 + 名组合（60 姓 × 80 名 ≈ 4800 种）
+  const RAND_SURNAMES = [
+    '云', '沈', '顾', '江', '苏', '林', '叶', '秦', '白', '陆',
+    '宋', '楚', '萧', '裴', '温', '韩', '祁', '简', '谢', '段',
+    '程', '许', '崔', '傅', '卫', '凌', '骆', '容', '闻', '姜',
+    '殷', '纪', '封', '阮', '辜', '兰', '季', '贺', '时', '施',
+    '聂', '岳', '谭', '章', '曾', '龚', '常', '茅', '翟', '闵',
+    '蔚', '尹', '席', '薛', '甄', '桑', '宁', '钟', '乔', '霍'
+  ]
+  const RAND_GIVENS = [
+    '平', '川', '岚', '澈', '野', '洲', '昀', '澜', '砚', '行',
+    '舟', '越', '衡', '衍', '宸', '蔚', '霁', '霜', '叙', '谦',
+    '知远', '暮白', '清晏', '听澜', '云舟', '亦风', '南絮', '北辰', '疏影', '青梧',
+    '见山', '怀瑾', '无恙', '长明', '三省', '九思', '逸辰', '子昂', '若谷', '临风',
+    '斯年', '望舒', '既明', '朝雨', '星野', '墨白', '止戈', '归远', '拾光', '照野',
+    '春池', '听雪', '抚琴', '染墨', '沉舟', '拂晓', '折枝', '寄舟', '问渠', '执一',
+    '澄', '珉', '钧', '陌', '栖', '晏', '沐', '卿', '珩', '望',
+    '昀安', '知微', '清和', '长庚', '流光', '未晞', '无咎', '守拙', '抱朴', '观棋'
+  ]
+  function randomPlayerName() {
+    const s = RAND_SURNAMES[Math.floor(Math.random() * RAND_SURNAMES.length)]
+    const g = RAND_GIVENS[Math.floor(Math.random() * RAND_GIVENS.length)]
+    return s + g
+  }
 
   // ═══ 场景对白选项记忆（在场景中选过但未过场景时, 重进保留上次选择且不允许改选其他） ═══
   // 结构 { [sceneId]: { options: { [optionNodeId]: chosenChildId } } }
@@ -88,13 +116,17 @@ export const useGameStore = defineStore('game', () => {
     if (playTimer) { clearInterval(playTimer); playTimer = null }
   }
 
-  async function startNewGame(gameId) {
+  async function startNewGame(gameId, name) {
     const params = gameId ? { game_id: gameId, ...langParam() } : langParam()
     const res = await get('/play/start', params)
     if (res.error) { toast.show(res.error); return }
     playSeconds.value = 0
     sceneHistory.value = []   // 新游戏清空历史
     clearAllDialogueHistory()  // 重玩：清空全部场景对白选择记忆（重新可自由选择）
+    // 角色名：优先用本次命名, 其次保留旧名（结局页重开不改名）, 都没有则随机生成
+    playerName.value = (typeof name === 'string' && name.trim())
+      ? name.trim().slice(0, 24)
+      : (playerName.value || randomPlayerName())
     themeConfig.value = res.theme_config || null
     // 游戏属性：重玩清零 —— 一律按定义重置（初始值统一 0），影响表重建
     gameAttributes.value = (res.scene?.attributes || []).map(a => ({
@@ -240,7 +272,8 @@ export const useGameStore = defineStore('game', () => {
         audio_label: localStorage.getItem('plot_game_audio_label') || null,
         sub_label: localStorage.getItem('plot_game_sub_label') || null,
         scene_history: sceneHistory.value.slice(),   // 历史栈随存档保存，读档后可继续返回
-        attributes: Object.fromEntries(gameAttributes.value.map(a => [a.id, a.value]))  // 属性值快照
+        attributes: Object.fromEntries(gameAttributes.value.map(a => [a.id, a.value])),  // 属性值快照
+        player_name: playerName.value || null  // 角色命名随档持久化
       })
     } catch (e) { /* 静默失败 */ }
   }
@@ -314,6 +347,7 @@ export const useGameStore = defineStore('game', () => {
     else localStorage.removeItem('plot_game_sub_label')
 
     playSeconds.value = save.play_time || 0
+    playerName.value = save.player_name || ''  // 角色名随档恢复
     // 恢复存档的场景历史栈（旧存档无此字段时为空，无法返回）
     try {
       const h = save.history_json ? JSON.parse(save.history_json) : []
@@ -366,7 +400,7 @@ export const useGameStore = defineStore('game', () => {
     currentScene, isEnding, ending, currentGameId, sceneHistory, themeConfig,
     gameAttributes, dialogueEffectMap, attrChangeAnims,
     choiceDelayId, timerInterval, showingChoices, currentAudioEl,
-    playSeconds,
+    playSeconds, playerName, pendingPlayerName, randomPlayerName,
     startNewGame, loadScene, makeChoice, backtrack,
     applyDialogueEffects,
     recordDialogueChoice, getRecordedChoice, clearSceneDialogueHistory, clearAllDialogueHistory,

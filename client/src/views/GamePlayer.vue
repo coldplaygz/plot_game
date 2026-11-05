@@ -16,8 +16,8 @@
       @click="togglePlay"
     ></video>
 
-    <!-- ═══ 顶栏：返回 + 场景标题 + 菜单 ═══ -->
-    <div class="relative z-20 shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 pt-[env(safe-area-inset-top)] pb-2 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300"
+    <!-- ═══ 顶栏：返回 + 属性栏(同一行) + 菜单 ═══ -->
+    <div class="relative z-30 shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-5 pt-[env(safe-area-inset-top)] pb-2 bg-gradient-to-b from-black/70 to-transparent transition-opacity duration-300"
       :class="controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'">
       <div class="relative shrink-0">
         <button @click="showBackMenu = !showBackMenu"
@@ -41,13 +41,26 @@
           </button>
         </div>
       </div>
-      <span v-if="game.currentScene" class="flex-1 min-w-0 truncate text-sm text-white/70">{{ game.currentScene.title }}</span>
+      <!-- 属性栏（与返回按钮同一行; 弹出菜单 z-50 盖在胶囊上方不被遮挡） -->
+      <div v-if="game.gameAttributes.length || game.playerName"
+        class="flex-1 min-w-0 flex flex-row flex-wrap items-center gap-1.5 pointer-events-none">
+        <div v-if="game.playerName" class="attr-pill">
+          <span class="attr-name">姓名</span>
+          <span class="attr-sep"></span>
+          <span class="attr-val">{{ game.playerName }}</span>
+        </div>
+        <div v-for="attr in game.gameAttributes" :key="attr.id" class="attr-pill">
+          <span class="attr-name">{{ attr.name }}</span>
+          <span class="attr-sep"></span>
+          <span class="attr-val">{{ attr.value }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- ═══ 中间区：缓冲 + 大播放按钮 ═══ -->
     <div class="relative z-10 flex-1 min-h-0 flex items-center justify-center pointer-events-none">
       <div v-if="isBuffering" class="w-12 h-12 border-4 border-white/20 border-t-brand-purple rounded-full animate-spin"></div>
-      <div v-else-if="!isPlaying && !choicesActive"
+      <div v-else-if="!isPlaying && !choicesActive && !activeDialogueNode"
         class="w-16 h-16 sm:w-20 sm:h-20 flex items-center justify-center rounded-full bg-black/50 border border-white/25 text-white">
         <svg viewBox="0 0 24 24" class="w-8 h-8 sm:w-10 sm:h-10 ml-1" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
       </div>
@@ -78,12 +91,22 @@
           <img v-if="activeCharAvatar" :key="'dlgfig-' + (activeDialogueNode.character_id || 0)"
             :src="activeCharAvatar"
             class="dlg-figure" />
-          <!-- 说话人名牌（框左上角, 角色主题色渐变, 无主题色时金色兜底） -->
-          <div v-if="activeDialogueNode.speaker" class="dlg-nameplate" :style="nameplateVars">{{ activeDialogueNode.speaker }}</div>
-          <!-- 普通对白（有名牌时正文让出顶部空间） -->
+          <!-- 说话人名牌（框左上角, 角色主题色渐变, 无主题色时金色兜底; 主角显示玩家命名） -->
+          <div v-if="displaySpeaker" class="dlg-nameplate" :style="nameplateVars">{{ displaySpeaker }}</div>
+          <!-- 自动播放开关（右上角, 与名牌同一水平带）：勾选后普通对白3秒自动推进下一条, 提问仍需手动选择 -->
+          <button @click.stop="toggleDialogueAuto"
+            class="absolute top-[0.55rem] right-[0.75rem] z-20 inline-flex items-center gap-1 px-2 py-1 rounded-full border text-[11px] leading-none transition-colors"
+            :class="dialogueAuto
+              ? 'bg-amber-400/20 border-amber-300/50 text-amber-200'
+              : 'bg-black/35 border-white/25 text-white/70 backdrop-blur-[3px]'">
+            <svg v-if="dialogueAuto" viewBox="0 0 24 24" class="w-3 h-3" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            <svg v-else viewBox="0 0 24 24" class="w-3 h-3" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            <span>自动</span>
+            <span v-if="autoCountdown > 0" class="tabular-nums text-amber-300">{{ autoCountdown }}s</span>
+          </button>
+          <!-- 普通对白（名牌/自动开关占顶部, 正文让出空间） -->
           <div v-if="activeDialogueNode.node_type !== 'option'"
-            class="dlg-box bg-black/75 border border-white/15 px-4 py-3 backdrop-blur-sm shadow-xl"
-            :class="activeDialogueNode.speaker ? 'rounded-xl pt-[2.9rem]' : 'rounded-xl'">
+            class="dlg-box border border-amber-200/25 rounded-xl pt-[2rem] px-4 py-3 backdrop-blur-[3px]">
             <span class="block leading-relaxed whitespace-pre-wrap"
               :class="[textEffectClass, textSizeClass]">{{ activeDialogueNode?.text }}</span>
             <svg viewBox="0 0 24 24" class="dlg-next-arrow absolute right-2.5 bottom-1.5 w-5 h-5 text-amber-400" fill="none"
@@ -93,8 +116,7 @@
           </div>
           <!-- 对白选项（提问）：子节点作为候选项按钮 -->
           <div v-else
-            class="dlg-box bg-black/75 border border-white/15 px-4 py-3 backdrop-blur-sm shadow-xl"
-            :class="activeDialogueNode.speaker ? 'rounded-xl pt-[2.9rem]' : 'rounded-xl'">
+            class="dlg-box border border-amber-200/25 rounded-xl pt-[2rem] px-4 py-3 backdrop-blur-[3px]">
             <span class="block text-sm sm:text-base text-white leading-relaxed whitespace-pre-wrap mb-2">{{ activeDialogueNode.text }}</span>
             <div class="flex flex-col gap-1.5">
               <button v-for="opt in activeDialogueOptions" :key="opt.id"
@@ -105,7 +127,7 @@
                     ? 'bg-white/5 border-white/10 text-white/35 cursor-not-allowed'
                     : opt.id === recordedChoiceId
                       ? 'bg-brand-purple/25 border-brand-purple/50 text-white'
-                      : 'bg-white/10 border-white/15 hover:bg-brand-purple/30 hover:border-brand-purple text-white'"
+                      : 'bg-white/10 border-white/15 hover:bg-amber-400/15 hover:border-amber-300/40 text-white'"
                 :disabled="optionGated(opt) || optionLocked(opt)"
                 @click.stop="optionGated(opt) || optionLocked(opt) ? null : pickDialogueOption(opt.id)">
                 <div class="flex items-center gap-2">
@@ -134,15 +156,7 @@
       </div>
     </div>
 
-    <!-- ═══ 属性面板（左上角横向并排, 紧凑单行, 有自定义属性时显示） ═══ -->
-    <div v-if="game.gameAttributes.length"
-      class="absolute top-16 left-3 z-20 flex flex-row flex-wrap items-center gap-1 max-w-[60vw] pointer-events-none">
-      <div v-for="attr in game.gameAttributes" :key="attr.id"
-        class="flex items-center gap-1 bg-black/55 backdrop-blur-sm border border-white/10 rounded px-1.5 py-0.5">
-        <span class="text-[10px] leading-none text-white/60">{{ attr.name }}</span>
-        <span class="text-[11px] leading-none font-bold text-white tabular-nums">{{ attr.value }}</span>
-      </div>
-    </div>
+    <!-- ═══ 属性面板已并入顶栏（与返回按钮同一行） ═══ -->
 
     <!-- ═══ 属性变化飘字（选项结算反馈, 在属性行下方避免遮挡） ═══ -->
     <div class="absolute z-30 pointer-events-none"
@@ -167,37 +181,7 @@
       <!-- 控制栏 -->
       <div class="px-3 sm:px-4 pt-1 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] bg-gradient-to-t from-black/85 via-black/60 to-transparent transition-opacity duration-300"
         :class="controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'">
-        <!-- 进度条：鼠标/手指移到附近才浮现（桌面 hover 触发 + 移动端控制栏出现即显示） -->
-        <div
-          class="group/bar relative h-6 flex items-center cursor-pointer select-none mb-0.5 transition-opacity duration-200"
-          :class="progressBarVisible ? 'opacity-100' : 'opacity-0'"
-          @mouseenter="progressHover = true"
-          @mouseleave="progressHover = false"
-          @touchstart.passive="progressHover = true"
-          @touchend.passive="touchLeaveProgress"
-          @click.stop
-        >
-          <!-- 轨道 -->
-          <div class="relative w-full h-[4px] group-hover/bar:h-[6px] transition-all duration-150 rounded-full bg-white/20 overflow-hidden"
-            @click.stop="onProgressClick">
-            <!-- 已播放 -->
-            <div class="absolute inset-y-0 left-0 bg-brand-purple rounded-full"
-              :style="{ width: progressPercent + '%' }"></div>
-            <!-- 缓冲 -->
-            <div v-if="bufferedPercent > progressPercent" class="absolute inset-y-0 left-0 bg-white/25 rounded-full"
-              :style="{ width: bufferedPercent + '%' }"></div>
-          </div>
-          <!-- 拖拽手柄（hover 加大） -->
-          <div class="absolute w-3.5 h-3.5 rounded-full bg-brand-purple shadow-lg pointer-events-none transition-transform duration-150"
-            :class="progressHover ? 'scale-125' : 'scale-100'"
-            :style="{ left: 'calc(' + progressPercent + '% - 7px)' }"></div>
-          <!-- 时间提示（拖拽/hover 时显示） -->
-          <div v-if="progressHover && videoDuration"
-            class="absolute -top-6 px-1.5 py-0.5 rounded bg-black/85 text-white text-[10px] tabular-nums pointer-events-none whitespace-nowrap"
-            :style="{ left: 'calc(' + progressPercent + '% - 24px)' }">
-            {{ formatTime(videoCurrentTime) }} / {{ formatTime(videoDuration) }}
-          </div>
-        </div>
+        <!-- 进度条已按需求彻底移除（不显示播放进度） -->
 
         <!-- 按钮行 -->
         <div class="flex items-center gap-1.5 sm:gap-2">
@@ -445,48 +429,13 @@ const { isMobile, updateMobileDetection } = useMobileDetection()
 // 播放状态
 const isPlaying = ref(false)
 const isBuffering = ref(false)
-const videoCurrentTime = ref(0)  // 供 choice_delay 弹出检测 + 进度条
-const videoDuration = ref(0)     // 供 skipScene 用 + 进度条
+const videoCurrentTime = ref(0)  // 供 choice_delay 弹出检测 + 对白触发
+const videoDuration = ref(0)     // 供 skipScene 用
 const playbackRate = ref(1)
 const isLooping = ref(false)
 const subtitleText = ref('')
 
-// ═══ 进度条（鼠标移到附近才显示; 移动端控制栏出现即显示） ═══
-const progressHover = ref(false)
-// 桌面: 控制栏可见 && 悬停; 移动端: 控制栏可见即显示（触屏无 hover 概念）
-const progressBarVisible = computed(() => {
-  if (isMobile.value) return controlsVisible.value
-  return controlsVisible.value && progressHover.value
-})
-const progressPercent = computed(() => {
-  if (!videoDuration.value) return 0
-  return Math.min(100, Math.max(0, (videoCurrentTime.value / videoDuration.value) * 100))
-})
-const bufferedPercent = computed(() => {
-  const v = videoEl.value
-  if (!v || !v.buffered.length || !videoDuration.value) return 0
-  return Math.min(100, (v.buffered.end(v.buffered.length - 1) / videoDuration.value) * 100)
-})
-function touchLeaveProgress() {
-  setTimeout(() => { progressHover.value = false }, 1500)
-}
-function formatTime(sec) {
-  const s = Math.max(0, Math.floor(sec || 0))
-  const m = Math.floor(s / 60), ss = s % 60
-  return m + ':' + String(ss).padStart(2, '0')
-}
-// 点击轨道 seek（对白/选项期间禁止拖动——对白跟随视频时间轴触发，乱跳会错乱触发状态）
-function onProgressClick(e) {
-  if (dialogueActiveId.value || choicesActive.value) return
-  const v = videoEl.value
-  if (!v || !v.duration || !Number.isFinite(v.duration)) return
-  const rect = e.currentTarget.getBoundingClientRect()
-  const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
-  v.currentTime = ratio * v.duration
-  videoCurrentTime.value = v.currentTime
-  // seek 后若处于暂停状态保持暂停；播放中则继续
-  revealControls()
-}
+// ═══ 进度条已按需求彻底移除（不显示播放进度） ═══
 
 // UI 菜单状态（存档/读档入口已移除：过场景自动保存 + 开场页继续游戏）
 const showMoreMenu = ref(false)
@@ -599,6 +548,14 @@ const activeCharAvatar = computed(() => {
 })
 const activeCharColor = computed(() => activeDialogueNode.value?.character_color || null)
 
+// 说话人显示名：主角对白显示玩家开局输入的名字（未命名时回落角色本名）
+const displaySpeaker = computed(() => {
+  const node = activeDialogueNode.value
+  if (!node) return ''
+  if (node.is_protagonist && game.playerName) return game.playerName
+  return node.speaker || ''
+})
+
 // 名牌底色变量：角色主题色渐变（dlg-nameplate 内 color-mix 消费; 未设色时走 CSS 金色兜底）
 const nameplateVars = computed(() => {
   const c = activeCharColor.value
@@ -616,6 +573,40 @@ const activeDialogueOptions = computed(() => {
   if (!node || node.node_type !== 'option') return []
   return nodeChildren(node.id)
 })
+
+// ═══ 对白自动播放（勾选后普通对白 3 秒倒计时自动推进下一条） ═══
+// 提问(option)节点不自动跳——选项影响属性结算, 必须玩家手动选择
+// 开关状态存 localStorage, 跨场景/刷新保持
+const AUTO_PLAY_KEY = 'pg_dialogue_auto'
+const dialogueAuto = ref(localStorage.getItem(AUTO_PLAY_KEY) === '1')
+const autoCountdown = ref(0)
+let autoTimer = null
+
+function clearAutoTimer() {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null }
+  autoCountdown.value = 0
+}
+
+function startAutoTimer() {
+  clearAutoTimer()
+  const node = activeDialogueNode.value
+  if (!dialogueAuto.value || !node || node.node_type !== 'line') return
+  autoCountdown.value = 3
+  autoTimer = setInterval(() => {
+    autoCountdown.value -= 1
+    if (autoCountdown.value <= 0) {
+      clearAutoTimer()
+      advanceDialogue()  // 推进到下一条/关闭对白；新节点在 startDialogue 里重新计时
+    }
+  }, 1000)
+}
+
+function toggleDialogueAuto() {
+  dialogueAuto.value = !dialogueAuto.value
+  try { localStorage.setItem(AUTO_PLAY_KEY, dialogueAuto.value ? '1' : '0') } catch (e) { /* 隐私模式忽略 */ }
+  if (dialogueAuto.value) startAutoTimer()
+  else clearAutoTimer()
+}
 
 // 选项按钮上的属性影响标记 [{attr_id, attr_name, delta}]
 function dialogueOptionEffects(optionId) {
@@ -667,10 +658,11 @@ const textSizeClass = computed(() => {
   return textSizes.includes(s) ? `dt-${s}` : ''
 })
 
-// 飘字起始 y：属性行下方（属性行 top-16=4rem 起；单行约 1.5rem, 换行时按比例下移）
+// 飘字起始 y：顶栏（含属性胶囊行）下方。顶栏高 = safe-area + pb-2(0.5rem) + 按钮 44px(2.75rem) ≈ 3.25rem,
+// 留 0.25rem 间隙取 3.5rem; 胶囊换行时按行数下移（每行约 1.6rem）
 const attrFloatTop = computed(() => {
   const rows = Math.ceil(game.gameAttributes.length / 3) || 1  // 每3个约一行
-  return `calc(4rem + ${rows * 1.6}rem)`
+  return `calc(3.5rem + ${rows * 1.6}rem)`
 })
 
 // 检测触发（onTimeUpdate 调用）：视频播到根对白 show_time → 暂停视频开始对白
@@ -689,11 +681,13 @@ function startDialogue(node) {
   dialogueChosenId.value = null
   dialogueActiveId.value = node.id
   videoEl.value?.pause()  // 对白显示期间暂停视频
+  startAutoTimer()  // 自动播放：普通对白3秒后自动推进（提问节点不计时）
 }
 
 // 点击对白推进：沿树游走 —— 当前节点走完看子节点：
 // 子节点是 line → 继续显示；是 option → 弹出提问；无子节点 → 关闭并恢复视频
 function advanceDialogue() {
+  clearAutoTimer()  // 手动点击取消本轮倒计时（自动触发路径已先清掉自己）
   const node = activeDialogueNode.value
   if (!node || node.node_type === 'option') return  // option 节点必须点选项推进
   const children = nodeChildren(node.id)
@@ -711,6 +705,7 @@ function advanceDialogue() {
 // 分支里遇到提问节点会再弹出提问，层级不限；同时结算该选项的属性影响
 // 场景对白选项记忆：未过场景重进时保留上次选择（不允许改选其他, 也不重复结算属性）
 async function pickDialogueOption(childId) {
+  clearAutoTimer()  // 手动选择取消倒计时
   const node = activeDialogueNode.value
   if (!node) return
   const sid = game.currentScene?.id
@@ -1138,6 +1133,7 @@ async function playScene() {
   dialogueActiveId.value = null
   dialogueChosenId.value = null
   shownDialogueIds.clear()
+  clearAutoTimer()  // 场景切换取消对白自动推进倒计时
   isBuffering.value = true
   videoCurrentTime.value = 0
   videoDuration.value = 0
@@ -1347,9 +1343,13 @@ onMounted(async () => {
     // ?new=1（详情页"重新开始"/结局页"再看一次"）= 显式新开一局（清属性+对白记忆）
     // 否则默认继续游戏（读自动档: 场景+属性快照+历史栈），无自动档才新开
     if (route.query.new === '1') {
-      await game.startNewGame(parseInt(gameId) || gameId)
+      // 角色命名: 消费命名弹窗暂存的名字(没有则沿用旧名/随机生成)
+      const pending = game.pendingPlayerName
+      game.pendingPlayerName = null
+      await game.startNewGame(parseInt(gameId) || gameId, pending || undefined)
     } else {
       const ok = await game.continueGame(parseInt(gameId) || gameId)
+      game.pendingPlayerName = null  // 继续游戏不吃命名
       if (!ok) await game.startNewGame(parseInt(gameId) || gameId)
     }
   }
@@ -1359,6 +1359,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   playRequestId++
   transitionActive.value = false  // 中断进行中的过场动画
+  clearAutoTimer()
   if (hideControlsTimer) { clearTimeout(hideControlsTimer); hideControlsTimer = null }
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   unbindVideoEvents(videoEl.value)
@@ -1441,6 +1442,10 @@ video::cue {
 @media (min-width: 640px) {
   .dlg-figure { height: clamp(240px, 64vh, 640px); }
 }
+/* 手机横屏(宽度达sm但视口矮): 抬高量与立绘高度按视口高收紧, 对白贴近底栏而非悬在屏幕中部 */
+@media (min-width: 640px) and (max-height: 520px) {
+  .dlg-figure { height: clamp(170px, 55vh, 420px); max-width: 46vw; }
+}
 @keyframes dlg-fig-in {
   from { opacity: 0; transform: translate(-26px, 10px); }
   to   { opacity: 1; transform: none; }
@@ -1460,46 +1465,85 @@ video::cue {
 @media (min-width: 640px) {
   .dlg-panel { padding: 0 12px 8.5rem; }
 }
+/* 手机横屏(视口矮): 底距收紧, 对白贴近底栏 */
+@media (min-width: 640px) and (max-height: 520px) {
+  .dlg-panel { padding: 0 16px 5.25rem; }
+}
 
-/* 说话人名牌：主题色渐变（--np-color 由角色 color 注入, 未设色时兜底金色） */
+/* 说话人名牌：无背景 — 角色主题色文字 + 左侧同色竖条（--np-color 注入, 未设色兜底金色） */
 .dlg-nameplate {
-  --np-color: #c9900f;
+  --np-color: #f5c542;
   position: absolute;
-  top: 0.5rem;
-  left: 0.5rem;
+  top: 0.55rem;
+  left: 0.75rem;
   z-index: 2;
   display: inline-flex;
   align-items: center;
-  height: 1.9rem;
-  padding: 0 1.1rem;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
-  color: #fff;
-  font-size: 13px;
+  gap: 7px;
+  color: var(--np-color);
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-  background: linear-gradient(135deg,
-    color-mix(in srgb, var(--np-color) 30%, #ffe9a8) 0%,
-    var(--np-color) 55%,
-    color-mix(in srgb, var(--np-color) 62%, #2b1800) 100%);
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 2px 10px rgba(0, 0, 0, 0.55);
   animation: dlg-name-in 0.25s ease-out both;
+}
+.dlg-nameplate::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--np-color);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 @keyframes dlg-name-in {
   from { opacity: 0; transform: translateY(8px) scale(0.92); }
   to   { opacity: 1; transform: none; }
 }
 
-/* 对话框：名牌下方升入；置在立绘上方(人物下半身沉入框后) */
+/* 对话框：透明底+金边, 文字投影替代底色保证可读；置在立绘上方(人物下半身沉入框后) */
 .dlg-box {
   position: relative;
   z-index: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 2px 12px rgba(0, 0, 0, 0.55);
   animation: dlg-box-in 0.28s ease-out both;
 }
 @keyframes dlg-box-in {
   from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: none; }
 }
+
+/* ═══ 属性面板胶囊：透明深底+琥珀描边+金色数值, 与对白框同一视觉语言 ═══ */
+.attr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 9px;
+  border: 1px solid rgba(251, 222, 158, 0.32);
+  border-radius: 999px;
+  background: rgba(10, 10, 14, 0.38);
+  backdrop-filter: blur(3px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+.attr-pill .attr-name {
+  font-size: 12px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.72);
+}
+.attr-pill .attr-sep {
+  width: 1px;
+  height: 11px;
+  border-radius: 1px;
+  background: rgba(251, 222, 158, 0.35);
+}
+.attr-pill .attr-val {
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 700;
+  color: #fcd34d;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 属性面板已并入顶栏（与返回按钮同一行）, 无需独立定位 */
 
 /* 继续指示：金色下箭头弹性律动 */
 .dlg-next-arrow {

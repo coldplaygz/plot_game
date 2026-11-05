@@ -58,6 +58,7 @@ async function initDatabase() {
         color VARCHAR(7) DEFAULT '#e91e63' COMMENT '主题色',
         sort_order INT DEFAULT 0,
         is_hidden TINYINT(1) DEFAULT 0 COMMENT '隐藏角色',
+        is_protagonist TINYINT(1) DEFAULT 0 COMMENT '主角(每游戏唯一, 玩家开局命名替换其对白说话人)',
         voice_actor VARCHAR(100) DEFAULT NULL,
         birthday VARCHAR(50) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -321,6 +322,18 @@ async function initDatabase() {
         console.log('[InitDB] 已为 saves 表补充 attributes_json 字段');
       }
     } catch (e) { console.warn('[InitDB] saves.attributes_json 迁移失败 (可能已存在):', e.message); }
+
+    // 旧库迁移：saves 表补充 player_name 字段（玩家角色命名, 属性栏展示随存档走）
+    try {
+      const [pnCol] = await conn.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='saves' AND COLUMN_NAME='player_name'",
+        [dbName]
+      );
+      if (!pnCol.length) {
+        await conn.query("ALTER TABLE saves ADD COLUMN player_name VARCHAR(24) DEFAULT NULL COMMENT '玩家角色命名'");
+        console.log('[InitDB] 已为 saves 表补充 player_name 字段');
+      }
+    } catch (e) { console.warn('[InitDB] saves.player_name 迁移失败 (可能已存在):', e.message); }
 
     // ============ 11. 存档好感度快照 ============
     await conn.query(`
@@ -813,6 +826,17 @@ async function migrateCharacterColumns(conn, dbName) {
       console.log('[InitDB] 已为 dialogues 表添加 expression 字段');
     }
   } catch (e) { console.warn('[InitDB] 表情字段迁移失败:', e.message); }
+
+  // --- 主角标记（每游戏唯一; 玩家开局命名替换主角对白说话人） ---
+  try {
+    const [c5] = await conn.query(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='characters' AND COLUMN_NAME='is_protagonist'",
+      [dbName]);
+    if (c5.length === 0) {
+      await conn.query("ALTER TABLE characters ADD COLUMN is_protagonist TINYINT(1) DEFAULT 0 COMMENT '主角(每游戏唯一, 玩家命名替换其对白说话人)' AFTER is_hidden");
+      console.log('[InitDB] 已为 characters 表添加 is_protagonist 字段');
+    }
+  } catch (e) { console.warn('[InitDB] characters.is_protagonist 迁移失败:', e.message); }
 
   // --- 对白文字特效 ---
   try {

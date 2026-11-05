@@ -485,7 +485,7 @@ router.post('/choose', async (req, res) => {
 async function getSceneDialogues(sceneId, lang = '') {
   const [rows] = await pool.query(
     `SELECT d.id, d.parent_id, d.node_type, d.speaker, d.character_id, d.expression, d.text_effect, d.text_size, d.min_attr_id, d.min_value, d.text, d.text_i18n, d.show_time, d.duration, d.sort_order,
-            c.name AS character_name, c.avatar AS character_avatar, c.expressions AS character_expressions, c.color AS character_color
+            c.name AS character_name, c.avatar AS character_avatar, c.expressions AS character_expressions, c.color AS character_color, c.is_protagonist
      FROM dialogues d
      LEFT JOIN characters c ON d.character_id = c.id
      WHERE d.scene_id = ? ORDER BY d.sort_order ASC, d.id ASC`,
@@ -509,6 +509,7 @@ async function getSceneDialogues(sceneId, lang = '') {
       parent_id: d.parent_id,
       node_type: d.node_type || 'line',
       speaker: d.speaker || '',
+      is_protagonist: !!(d.is_protagonist && d.character_id),  // 主角对白: 播放器用玩家命名替换说话人显示
       character_id: d.character_id || null,
       expression: d.expression || null,
       text_effect: d.text_effect || null,

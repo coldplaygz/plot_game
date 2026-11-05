@@ -70,6 +70,68 @@
         </div>
       </div>
     </div>
+
+    <!-- ═══ 角色命名弹窗（开始新游戏时; 支持随机生成; 名字随档保存并显示在属性栏） ═══ -->
+    <div v-if="namingModal" class="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6">
+
+      <!-- 第一段：命名（已有进度时，"开始游戏"会先进入第二段的覆盖确认） -->
+      <div v-if="!confirmOverwrite" class="w-[320px] max-w-full bg-[#12121a]/95 border border-amber-200/25 rounded-2xl p-6 shadow-2xl">
+        <div class="flex justify-center mb-3">
+          <span class="w-11 h-11 rounded-full bg-gradient-to-br from-amber-300/25 to-amber-500/10 border border-amber-200/30 flex items-center justify-center text-lg">🎭</span>
+        </div>
+        <h3 class="text-lg font-bold text-white text-center">为你的角色命名</h3>
+        <p class="text-xs text-text-dim text-center mt-1 mb-4">这个名字将随你的冒险一起被记录</p>
+        <div class="flex items-center gap-2 mb-4">
+          <input v-model="nameInput" maxlength="24" placeholder="输入角色名"
+            class="flex-1 min-w-0 px-3 py-2.5 bg-black/40 border border-amber-200/30 rounded-xl text-white text-sm text-center placeholder-white/30 focus:outline-none focus:border-amber-300/60 transition-colors"
+            @keyup.enter="onPrimaryAction" />
+          <button @click.stop="nameInput = game.randomPlayerName()" title="随机生成"
+            class="shrink-0 w-10 h-10 rounded-xl border border-amber-200/30 bg-white/5 text-amber-300 hover:bg-amber-400/15 active:scale-95 transition-all">🎲</button>
+        </div>
+        <div class="flex gap-2">
+          <button @click.stop="namingModal = false"
+            class="flex-1 py-2.5 rounded-xl border border-border-dim text-text-muted text-sm hover:border-white/40 hover:text-white transition-colors">取消</button>
+          <button @click.stop="onPrimaryAction" :disabled="!nameInput.trim()"
+            class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 text-black text-sm font-bold disabled:opacity-40 hover:opacity-90 active:opacity-80 transition-opacity">
+            {{ autoSaveInfo ? '重新开始' : '开始游戏' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 第二段：覆盖进度确认（危险操作醒目化: 列出将丢失的内容） -->
+      <div v-else class="w-[320px] max-w-full bg-[#1a1013]/95 border border-red-400/35 rounded-2xl p-6 shadow-[0_0_40px_-8px_rgba(248,113,113,0.45)]">
+        <div class="flex justify-center mb-3">
+          <span class="w-11 h-11 rounded-full bg-red-500/15 border border-red-400/40 flex items-center justify-center text-lg">⚠️</span>
+        </div>
+        <h3 class="text-lg font-bold text-white text-center">覆盖当前进度？</h3>
+        <p class="text-xs text-red-200/70 text-center mt-1 mb-4">重新开始将开始全新的冒险，以下内容会丢失且无法恢复</p>
+
+        <div class="rounded-xl bg-black/35 border border-red-400/20 p-3 mb-4 flex flex-col gap-2">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-red-300/80">◆</span>
+            <span class="text-white/55">当前进度</span>
+            <span class="ml-auto text-white/80 truncate max-w-[55%] text-right">{{ continueLabel }}</span>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-red-300/80">◆</span>
+            <span class="text-white/55">角色属性</span>
+            <span class="ml-auto text-white/80">重置为初始值</span>
+          </div>
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-red-300/80">◆</span>
+            <span class="text-white/55">对白选择记录</span>
+            <span class="ml-auto text-white/80">清空</span>
+          </div>
+        </div>
+
+        <div class="flex gap-2">
+          <button @click.stop="confirmOverwrite = false"
+            class="flex-1 py-2.5 rounded-xl border border-white/25 text-white text-sm font-medium hover:bg-white/10 transition-colors">返回</button>
+          <button @click.stop="doRestart"
+            class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-red-500 to-rose-600 text-white text-sm font-bold hover:opacity-90 active:opacity-80 transition-opacity">确认覆盖</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -93,6 +155,9 @@ const autoSaveInfo = ref(null)
 const menuVisible = ref(false)
 const videoFailed = ref(false)
 const videoEl = ref(null)
+const namingModal = ref(false)  // 角色命名弹窗
+const confirmOverwrite = ref(false)  // 弹窗第二段：覆盖进度确认
+const nameInput = ref('')
 
 // 封面视频地址（编辑期间转码未完成可能不可播，失败时回退封面图）
 const coverVideoUrl = computed(() => {
@@ -235,17 +300,41 @@ function onScreenClick() {
 }
 
 function onStart() {
-  // 重新开始会覆盖自动存档（过场景时自动保存），有存档时二次确认
-  // ?new=1: 显式新开一局（GamePlayer 挂载默认是"继续游戏"，必须用标记区分）
-  if (autoSaveInfo.value) {
-    if (window.confirm('重新开始将覆盖当前进度，确定吗？')) {
-      game.cleanup()
-      router.push({ path: '/play/' + gameId, query: { new: '1' } })
-    }
-  } else {
-    router.push({ path: '/play/' + gameId, query: { new: '1' } })
-  }
+  // 打开命名弹窗: 开始新游戏前为角色命名(可随机生成), 确认后才进入
+  nameInput.value = game.playerName || game.randomPlayerName()
+  confirmOverwrite.value = false
+  namingModal.value = true
 }
+
+// 第一段"开始游戏/重新开始"按钮：无进度直接开始；有进度先进入覆盖确认
+function onPrimaryAction() {
+  const name = nameInput.value.trim()
+  if (!name) return
+  if (autoSaveInfo.value) {
+    confirmOverwrite.value = true   // 第二段：覆盖确认
+    return
+  }
+  doRestart()
+}
+
+// 真正开始新游戏（当前场景/属性/对白记忆将被重置）
+function doRestart() {
+  game.cleanup()
+  game.pendingPlayerName = nameInput.value.trim()  // GamePlayer 挂载 startNewGame 时消费
+  namingModal.value = false
+  confirmOverwrite.value = false
+  // ?new=1: 显式新开一局（GamePlayer 挂载默认是"继续游戏", 必须用标记区分）
+  router.push({ path: '/play/' + gameId, query: { new: '1' } })
+}
+
+// 被覆盖的进度描述（确认弹窗里展示"当前进度"具体是什么）
+const continueLabel = computed(() => {
+  const s = autoSaveInfo.value
+  if (!s) return '—'
+  const t = s.scene_title || s.title || '已开始的剧情'
+  const time = s.play_time ? ' · ' + Math.max(1, Math.round(s.play_time / 60)) + ' 分钟' : ''
+  return t + time
+})
 
 async function onContinue() {
   const ok = await game.continueGame(gameId)
