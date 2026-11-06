@@ -113,6 +113,14 @@ async function deductPointsOnce(userId, amount, type, refId, remark) {
     return { success: true, alreadyPaid: false, balance: newBalance };
   } catch (err) {
     await conn.rollback();
+    // DB 层唯一约束兜底（uq_points_dedup）：极端竞态下撞幂等键 → 查实后视为已付费。
+    // 正常路径由 FOR UPDATE 行锁串行化, 此分支仅在锁模式被未来改动破坏时兜底
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      try {
+        const [[user]] = await conn.query('SELECT points FROM users WHERE id = ?', [userId]);
+        return { success: true, alreadyPaid: true, balance: user ? user.points : 0 };
+      } catch { /* 查询也失败则落回原始错误 */ }
+    }
     throw err;
   } finally {
     conn.release();

@@ -509,7 +509,7 @@ async function getSceneDialogues(sceneId, lang = '') {
       parent_id: d.parent_id,
       node_type: d.node_type || 'line',
       speaker: d.speaker || '',
-      is_protagonist: !!(d.is_protagonist && d.character_id),  // 主角对白: 播放器用玩家命名替换说话人显示
+      is_protagonist: !!(d.is_protagonist && d.character_id),  // 主角对白: 播放器显示 角色名（玩家命名）
       character_id: d.character_id || null,
       expression: d.expression || null,
       text_effect: d.text_effect || null,

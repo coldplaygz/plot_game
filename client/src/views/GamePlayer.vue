@@ -91,7 +91,7 @@
           <img v-if="activeCharAvatar" :key="'dlgfig-' + (activeDialogueNode.character_id || 0)"
             :src="activeCharAvatar"
             class="dlg-figure" />
-          <!-- 说话人名牌（框左上角, 角色主题色渐变, 无主题色时金色兜底; 主角显示玩家命名） -->
+          <!-- 说话人名牌（框左上角, 角色主题色渐变, 无主题色时金色兜底; 主角显示 角色名（玩家命名）） -->
           <div v-if="displaySpeaker" class="dlg-nameplate" :style="nameplateVars">{{ displaySpeaker }}</div>
           <!-- 自动播放开关（右上角, 与名牌同一水平带）：勾选后普通对白3秒自动推进下一条, 提问仍需手动选择 -->
           <button @click.stop="toggleDialogueAuto"
@@ -548,12 +548,15 @@ const activeCharAvatar = computed(() => {
 })
 const activeCharColor = computed(() => activeDialogueNode.value?.character_color || null)
 
-// 说话人显示名：主角对白显示玩家开局输入的名字（未命名时回落角色本名）
+// 说话人显示名：主角对白显示"角色名（玩家命名）"，保留角色本名（未命名时回落角色本名）
 const displaySpeaker = computed(() => {
   const node = activeDialogueNode.value
   if (!node) return ''
-  if (node.is_protagonist && game.playerName) return game.playerName
-  return node.speaker || ''
+  const speaker = node.speaker || ''
+  if (node.is_protagonist && game.playerName) {
+    return speaker ? `${speaker}（${game.playerName}）` : game.playerName
+  }
+  return speaker
 })
 
 // 名牌底色变量：角色主题色渐变（dlg-nameplate 内 color-mix 消费; 未设色时走 CSS 金色兜底）

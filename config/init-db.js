@@ -424,9 +424,12 @@ async function initDatabase() {
         points INT NOT NULL COMMENT '变动积分(正=获得,负=消费)',
         type ENUM('recharge','choice','admin','refund','prop','backtrack') NOT NULL,
         ref_id INT DEFAULT NULL COMMENT '关联ID(choice_id/recharge_id等)',
+        dedup_key VARCHAR(32) AS (IF(type = 'choice', CONCAT('choice:', IFNULL(ref_id, 0)), NULL)) STORED COMMENT '幂等键(仅choice生成, 唯一约束防重复扣买断)',
         balance INT NOT NULL COMMENT '变动后余额',
         remark VARCHAR(255) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_points_dedup (user_id, dedup_key),
+        KEY idx_points_user_type_ref (user_id, type, ref_id),
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE SET NULL
       ) ENGINE=InnoDB
@@ -443,6 +446,35 @@ async function initDatabase() {
         console.log('[InitDB] 已为 points_log.type 枚举补充 backtrack 值');
       }
     } catch (e) { console.warn('[InitDB] points_log 枚举迁移失败 (可能已存在):', e.message); }
+
+    // 旧库迁移：积分流水安全网 —— choice 幂等键唯一约束（DB 层防重复扣买断兜底）+ 查询索引（幂等检查/已购查询走索引, 避免全表扫描）
+    try {
+      // 历史数据清洗：早期版本道具扣费误标为 type='choice'（remark 前缀"使用道具:", ref_id 实为道具ID），
+      // 污染 choice 空间（道具ID 与选项ID 冲突, 且会让用户"免费买断"恰好同ID的选项）——修正为 'prop'
+      await conn.query("UPDATE points_log SET type = 'prop' WHERE type = 'choice' AND remark LIKE '使用道具:%'");
+      const [dk] = await conn.query(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='points_log' AND COLUMN_NAME='dedup_key'",
+        [dbName]);
+      if (dk.length === 0) {
+        await conn.query("ALTER TABLE points_log ADD COLUMN dedup_key VARCHAR(32) AS (IF(type = 'choice', CONCAT('choice:', IFNULL(ref_id, 0)), NULL)) STORED COMMENT '幂等键(仅choice生成)'");
+        // 历史数据已有重复 choice 流水时唯一索引建不起来（提示人工处理, 不阻塞启动）
+        const [dup] = await conn.query(
+          "SELECT user_id, ref_id, COUNT(*) c FROM points_log WHERE type='choice' GROUP BY user_id, ref_id HAVING c > 1 LIMIT 3");
+        if (dup.length > 0) {
+          console.warn('[InitDB] points_log 存在重复 choice 流水, 唯一索引未创建, 请人工处理:', JSON.stringify(dup));
+        } else {
+          await conn.query("ALTER TABLE points_log ADD UNIQUE KEY uq_points_dedup (user_id, dedup_key)");
+          console.log('[InitDB] 已为 points_log 添加 dedup_key 幂等键唯一约束');
+        }
+      }
+      const [idx] = await conn.query(
+        "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME='points_log' AND INDEX_NAME='idx_points_user_type_ref'",
+        [dbName]);
+      if (idx.length === 0) {
+        await conn.query("ALTER TABLE points_log ADD INDEX idx_points_user_type_ref (user_id, type, ref_id)");
+        console.log('[InitDB] 已为 points_log 添加查询索引 idx_points_user_type_ref');
+      }
+    } catch (e) { console.warn('[InitDB] points_log 安全网迁移失败:', e.message); }
 
     console.log('[InitDB] 15 张数据表(含积分体系)创建/确认完成');
 
